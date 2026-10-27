@@ -1,0 +1,4 @@
+.venv/
+.env
+data/seekdb/
+data/seekdb.db
