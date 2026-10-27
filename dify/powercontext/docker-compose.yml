@@ -1,0 +1,31 @@
+# Local PowerContext for the tavern Chatflow.
+#
+# This file does not pull an image. Build the tag below from a clone of
+# https://github.com/oceanbase/powercontext using the upstream instructions:
+# https://github.com/oceanbase/powercontext/blob/master/docker/README.md
+#
+#   POWERCONTEXT_VERSION=$(uvx --from hatchling --with hatch-vcs hatchling version)
+#   docker build \
+#     --file docker/Dockerfile \
+#     --build-arg "POWERCONTEXT_VERSION=${POWERCONTEXT_VERSION}" \
+#     --tag powercontext-server:local \
+#     .
+#
+# Then, from this directory:
+#
+#   docker compose up
+#
+# The publish address stays on loopback, matching the upstream docker README.
+# A Dify container cannot use 127.0.0.1 to reach this port. See dify/RUN.md.
+
+services:
+  powercontext:
+    image: powercontext-server:local
+    container_name: powercontext-server
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - powercontext-data:/data
+
+volumes:
+  powercontext-data:
