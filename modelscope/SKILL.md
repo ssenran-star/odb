@@ -1,3 +1,5 @@
+
+<!-- OB-S:zAO928uWly-i-FO3vRyBKQ -->
 ---
 name: gaode-xiao-zhushou
 description: >-
@@ -5,7 +7,6 @@ description: >-
   用户问附近去哪儿、周边推荐、步行能到的地点，或输入含城市/起点/需求时使用。
 ---
 
-<!-- OB-S:zAO928uWly-i-FO3vRyBKQ -->
 
 # 高德小助手
 
