@@ -16,7 +16,10 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+import asyncio
+from collections.abc import Callable
+
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.persistence.cursors import SourceCursorRepository
@@ -48,10 +51,17 @@ async def enabled_profile_scopes(connection: AsyncConnection, scope_ids: tuple[s
 class SourceProcessingPendingProvider:
     """Inspect journal metadata, never Source bodies, prompts, or models."""
 
-    def __init__(self, database: AsyncDatabase, binding_name: str, artifact_family: str) -> None:
+    def __init__(
+        self,
+        database: AsyncDatabase,
+        binding_name: str,
+        artifact_family: str,
+        count_admission: JournalCountAdmission | None = None,
+    ) -> None:
         self._database = database
         self._binding = binding_name
         self._family = artifact_family
+        self._count_admission = count_admission
 
     async def reconcile(self, after_scope_id: str | None, limit: int, *, fence: ArtifactProcessingFence) -> str | None:
         heads = SOURCE_JOURNAL_HEADS_TABLE
@@ -68,9 +78,58 @@ class SourceProcessingPendingProvider:
             cursors = SourceCursorRepository()
             for scope, high in rows:
                 cursor = await cursors.load(connection, scope, self._binding)
-                if int(high) <= (0 if cursor is None else cursor.cursor.sequence):
-                    continue
-                intent = await intents.load(connection, scope, self._binding, for_update=True)
-                if intent is None or intent.dirty_generation == intent.clean_generation:
-                    await intents.mark_dirty(connection, scope, self._binding)
+                if int(high) > (0 if cursor is None else cursor.cursor.sequence):
+                    intent = await intents.load(connection, scope, self._binding, for_update=True)
+                    if intent is None or intent.dirty_generation == intent.clean_generation:
+                        await intents.mark_dirty(connection, scope, self._binding)
+                if self._count_admission is not None:
+                    await self._count_admission.consider(connection, scope, self._binding)
         return str(rows[-1][0]) if len(rows) == limit else None
+
+
+class JournalCountAdmission:
+    """Request one source-window invocation when unseen journal rows reach a threshold."""
+
+    def __init__(self, thresholds: dict[str, int | None] | None = None) -> None:
+        self._thresholds = {
+            name: value
+            for name, value in (thresholds or {}).items()
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        }
+        self._wake: Callable[[str], None] | None = None
+
+    def bind(self, wake: Callable[[str], None]) -> None:
+        self._wake = wake
+
+    async def consider(self, connection: AsyncConnection, scope_id: str, binding_name: str) -> bool:
+        threshold = self._thresholds.get(binding_name)
+        if threshold is None:
+            return False
+        head = await connection.scalar(
+            select(SOURCE_JOURNAL_HEADS_TABLE.c.position).where(SOURCE_JOURNAL_HEADS_TABLE.c.scope_id == scope_id)
+        )
+        if head is None:
+            return False
+        cursor = await SourceCursorRepository().load(connection, scope_id, binding_name)
+        sequence = 0 if cursor is None else cursor.cursor.sequence
+        if int(head) - sequence < threshold:
+            return False
+        intents = ArtifactProcessingIntentRepository()
+        current = await intents.load(connection, scope_id, binding_name, for_update=True)
+        if current is not None and current.requested_generation > current.handled_generation:
+            return False
+        await intents.request(connection, scope_id, binding_name)
+        return True
+
+    def schedule_wake(self, connection: AsyncConnection, bindings: tuple[str, ...]) -> None:
+        if not bindings or self._wake is None:
+            return
+        loop = asyncio.get_running_loop()
+        wake = self._wake
+        names = tuple(bindings)
+
+        def _on_commit(_connection: object) -> None:
+            for name in names:
+                loop.call_soon_threadsafe(wake, name)
+
+        event.listen(connection.sync_connection, "commit", _on_commit, once=True)

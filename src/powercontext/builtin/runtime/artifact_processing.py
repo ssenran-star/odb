@@ -432,6 +432,7 @@ class ArtifactProcessingSupervisor:
         retry_cap_seconds: float = _RETRY_CAP_SECONDS,
         retry_jitter: Callable[[], float] | None = None,
         tracing: RuntimeTracing | None = None,
+        count_admission: object | None = None,
     ) -> None:
         for attribute in ("binding_name", "artifact_family", "config_prefix"):
             names = [getattr(binding, attribute) for binding in bindings]
@@ -455,6 +456,7 @@ class ArtifactProcessingSupervisor:
         self._retry_cap = retry_cap_seconds
         self._jitter = retry_jitter or (lambda: SystemRandom().uniform(0.8, 1.2))
         self._tracing = tracing
+        self._count_admission = count_admission
         self._fence: ArtifactProcessingFence | None = None
         self._status = ArtifactProcessingSupervisorStatus.STANDBY
         self._wake = asyncio.Event()
@@ -994,6 +996,12 @@ class ArtifactProcessingSupervisor:
                     )
                 state.retries.pop(scope, None)
                 state.completed += 1
+                admission = self._count_admission
+                if admission is not None:
+                    async with self._database.transaction() as connection:
+                        await self._leases.require_fence(connection, self._require_current_fence())
+                        if await admission.consider(connection, scope, state.binding.binding_name):
+                            admission.schedule_wake(connection, (state.binding.binding_name,))
                 if row.requested_generation > row.handled_generation:
                     self.wake(state.binding.binding_name)
             except (ArtifactProcessingLeadershipLostError, _WorkerTerminationError):

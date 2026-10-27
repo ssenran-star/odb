@@ -85,6 +85,7 @@ class SourceRepository:
             if isinstance(definitions, SourceDefinitionRegistry)
             else SourceDefinitionRegistry.from_adapters(definitions)
         )
+        self.count_admission = None
 
     async def add(
         self,
@@ -171,6 +172,14 @@ class SourceRepository:
         intents = ArtifactProcessingIntentRepository()
         for binding_name in SOURCE_PROCESSING_BINDINGS:
             await intents.mark_dirty(connection, scope_id, binding_name)
+        admission = self.count_admission
+        if admission is not None:
+            requested = []
+            for binding_name in SOURCE_PROCESSING_BINDINGS:
+                if await admission.consider(connection, scope_id, binding_name):
+                    requested.append(binding_name)
+            if requested:
+                admission.schedule_wake(connection, tuple(requested))
         return StoredSource(ref=ref, value=source, journal_position=position), True
 
     async def get(

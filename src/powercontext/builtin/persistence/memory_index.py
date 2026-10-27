@@ -34,6 +34,15 @@ from powercontext.builtin.artifacts.memory import (
 )
 
 
+def _is_seekdb(connection: AsyncConnection) -> bool:
+    engine = getattr(connection, "engine", None)
+    for candidate in (engine, getattr(engine, "sync_engine", None)):
+        driver = getattr(getattr(candidate, "url", None), "drivername", "")
+        if driver == "mysql+aseekdb":
+            return True
+    return False
+
+
 def memory_channel_hits(
     rows: Iterable[Mapping[Any, Any]],
     memories: tuple[ArtifactRef, ...],
@@ -247,6 +256,20 @@ class CompositeMemoryIndex:
         request: MemorySearchRequest,
         /,
     ) -> MemorySearchChannels:
+        if request.mode == "hybrid" and request.query_vector is not None and _is_seekdb(connection):
+            vector_indexes = tuple(index for index in self.indexes if index.capabilities.vector)
+            fts_indexes = tuple(index for index in self.indexes if index.capabilities.fts)
+            if len(vector_indexes) == 1 and fts_indexes:
+                vector_index = vector_indexes[0]
+                if not await vector_index.vector_complete(
+                    connection, scope_id, request.memories, vector_index.profile
+                ):
+                    raise CapabilityNotSupportedError("vector")
+                from powercontext.builtin.persistence.oceanbase.memory_index import search_seekdb_hybrid
+
+                return await search_seekdb_hybrid(
+                    connection, scope_id, request, vector_index.profile.dimension
+                )
         fts: tuple[MemoryChannelHit, ...] = ()
         vector: tuple[MemoryChannelHit, ...] = ()
         for index in self.indexes:

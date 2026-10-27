@@ -140,7 +140,12 @@ from powercontext.builtin.runtime.decision_model import (
 from powercontext.builtin.runtime.family_processing import FAMILY_BINDINGS, FamilyWorkerSpec, run_family_worker
 from powercontext.builtin.runtime.memory_write_gate import build_memory_write_gate
 from powercontext.builtin.runtime.models import MemorySearchMode, RuntimeCapabilities
-from powercontext.builtin.runtime.processing_discovery import SourceProcessingPendingProvider, enabled_profile_scopes
+from powercontext.builtin.runtime.processing_discovery import (
+    JournalCountAdmission,
+    SourceProcessingPendingProvider,
+    enabled_profile_scopes,
+)
+from powercontext.builtin.triggers import SOURCE_WINDOW_TRIGGER_NAME
 from powercontext.builtin.runtime.processing_registry import (
     canonical_processing_manifest,
     dream_operations,
@@ -531,6 +536,13 @@ async def open_builtin_runtime(
         for name, readiness_probe in inference_readiness:
             if readiness_probe is not None:
                 readiness_probes[name] = ReadinessProbeDefinition(probe=readiness_probe, blocking=False)
+        count_admission = JournalCountAdmission(
+            {
+                SOURCE_WINDOW_TRIGGER_NAME: config.runtime.memory_source_count_threshold,
+                TOPIC_MEMORY_SOURCE_WINDOW_BINDING: config.runtime.topic_memory_source_count_threshold,
+            }
+        )
+        contexts.repositories.sources.count_admission = count_admission
         processing_bindings = _artifact_processing_bindings(
             config,
             contexts,
@@ -546,6 +558,7 @@ async def open_builtin_runtime(
             injected_memory_write_gate=memory_write_gate,
             worker_security=worker_security,
             source_registry=configured_source_registry,
+            count_admission=count_admission,
         )
         log_safely(
             logger,
@@ -654,8 +667,16 @@ async def open_builtin_runtime(
             )
         )
         runtime.artifact_processing_supervisor = await resources.enter_async_context(
-            _open_artifact_processing_supervisor(config, contexts, processing_bindings, tracing=tracing)
+            _open_artifact_processing_supervisor(
+                config,
+                contexts,
+                processing_bindings,
+                tracing=tracing,
+                count_admission=count_admission,
+            )
         )
+        if runtime.artifact_processing_supervisor is not None:
+            count_admission.bind(runtime.artifact_processing_supervisor.wake)
         contexts.profiles.operation_context = runtime._operation
         if config.handoff_report.enabled:
             runtime.handoff_report = HandoffReportApplication(
@@ -703,6 +724,7 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
     injected_memory_write_gate: MemoryWriteGate | None = None,
     worker_security: dict[str, Any] | None = None,
     source_registry: SourceDefinitionRegistry = BUILTIN_SOURCE_REGISTRY,
+    count_admission: JournalCountAdmission | None = None,
 ) -> tuple[ArtifactProcessingBinding, ...]:
     configured = list(bindings)
     _validate_processing_registrations(configured)
@@ -785,7 +807,7 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
                 timezone=config.runtime.profile_timezone if family == "profile" else "Asia/Shanghai",
                 pending_provider=None
                 if family == "skill"
-                else SourceProcessingPendingProvider(contexts.database, binding, family),
+                else SourceProcessingPendingProvider(contexts.database, binding, family, count_admission),
                 automatic_scope_filter=enabled_profile_scopes if family == "profile" else None,
             )
         )
@@ -826,6 +848,7 @@ async def _open_artifact_processing_supervisor(
     bindings: Sequence[ArtifactProcessingBinding],
     *,
     tracing: RuntimeTracing | None = None,
+    count_admission: JournalCountAdmission | None = None,
 ) -> AsyncIterator[ArtifactProcessingSupervisors | None]:
     if config.runtime.artifact_processing_role == "api" or not bindings:
         yield None
@@ -847,6 +870,7 @@ async def _open_artifact_processing_supervisor(
                     leases=contexts.repositories.processing_leases,
                     binding_states=contexts.repositories.processing_binding_states,
                     tracing=tracing,
+                    count_admission=count_admission,
                 )
             )
             supervisors.append(supervisor)
