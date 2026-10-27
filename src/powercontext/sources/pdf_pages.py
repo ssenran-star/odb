@@ -19,15 +19,17 @@ from __future__ import annotations
 import hashlib
 import io
 import re
-from collections import defaultdict
-from urllib.parse import quote
+from collections import Counter, defaultdict
+from collections.abc import Sequence
+from dataclasses import dataclass
+from urllib.parse import quote, unquote
 
 from pydantic import BaseModel, ConfigDict
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 from powercontext.builtin.artifacts.memory.models import MemoryCitation
-from powercontext.builtin.runtime.models import SearchMemoryRequest
+from powercontext.builtin.runtime.models import GetMemoryEntryRequest, SearchMemoryRequest
 from powercontext.limits import MAX_SOURCE_ID_LENGTH
 from powercontext.sources.definitions import AdapterSourceDefinition, SourceDefinition
 from powercontext.sources.models import Source, SourceMaterialization
@@ -36,16 +38,190 @@ from powercontext.sources.projections import TEXT_EVIDENCE_PROJECTION_KEY, TextE
 PDF_PAGE_SOURCE_NAME = "pdf-page"
 PDF_PAGE_SOURCE_VERSION = "1"
 _TOKEN = re.compile(r"[a-z]+|\d+")
-_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
-_WORD = re.compile(r"[A-Za-z][A-Za-z0-9&/-]{2,}")
-_STOP = frozenset(
-    """
-    a an the and or of to for in on at by from with without into over after before about as is are was were be been
-    being that this these those it its their his her they them we our you your not no nor if then than so such what
-    which who whom how when where why please provide give state calculate using used use only shown within between
-    during per FY fy year years company report reported reporting define defined response question answer answers
-    """.split()
+_STOP = frozenset([
+    "a",
+    "an",
+    "the",
+    "and",
+    "or",
+    "of",
+    "to",
+    "for",
+    "in",
+    "on",
+    "at",
+    "by",
+    "from",
+    "with",
+    "without",
+    "into",
+    "over",
+    "after",
+    "before",
+    "about",
+    "as",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "that",
+    "this",
+    "these",
+    "those",
+    "it",
+    "its",
+    "their",
+    "his",
+    "her",
+    "they",
+    "them",
+    "we",
+    "our",
+    "you",
+    "your",
+    "not",
+    "no",
+    "nor",
+    "if",
+    "then",
+    "than",
+    "so",
+    "such",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "how",
+    "when",
+    "where",
+    "why",
+    "please",
+    "provide",
+    "give",
+    "state",
+    "calculate",
+    "using",
+    "used",
+    "use",
+    "only",
+    "shown",
+    "within",
+    "between",
+    "during",
+    "per",
+    "year",
+    "years",
+    "company",
+    "define",
+    "defined",
+    "response",
+    "question",
+    "answer",
+    "answers",
+    "do",
+    "does",
+    "did",
+    "can",
+    "could",
+    "should",
+    "would",
+    "has",
+    "have",
+    "had",
+    "any",
+    "its",
+    "also",
+])
+_SYNONYMS = {
+    "geographies": [
+        "geographic",
+        "geography",
+        "region",
+        "regions",
+        "segment",
+        "segments",
+        "operations",
+        "division",
+        "divisions",
+    ],
+    "geography": ["geographic", "region", "regions", "segment", "segments"],
+    "geographic": ["region", "regions", "segment", "segments"],
+    "operates": ["operations", "operation"],
+    "operate": ["operations", "operation"],
+    "operations": ["operates"],
+    "battles": ["proceedings", "litigation", "lawsuit", "lawsuits", "claims"],
+    "battle": ["proceedings", "litigation", "claims"],
+    "lawsuits": ["litigation", "proceedings", "claims"],
+    "lawsuit": ["litigation", "proceedings", "claims"],
+    "litigation": ["proceedings", "claims"],
+    "legal": ["proceedings", "litigation"],
+    "ebitda": ["depreciation", "amortization", "operating"],
+    "capex": ["capital", "expenditures", "expenditure"],
+    "restructuring": ["impairment"],
+    "impairment": ["restructuring"],
+    "revenue": ["sales", "revenues"],
+    "revenues": ["sales", "revenue"],
+    "cyclicality": ["cyclical", "seasonality", "seasonal"],
+    "cyclical": ["cyclicality", "seasonality"],
+    "concentration": ["customer", "customers", "accounted"],
+    "customers": ["customer"],
+    "customer": ["customers"],
+    "acquisitions": ["acquisition", "acquired"],
+    "acquisition": ["acquired", "acquisitions"],
+    "acquired": ["acquisition"],
+    "inventory": ["inventories"],
+    "inventories": ["inventory"],
+    "margin": ["margins"],
+    "margins": ["margin"],
+}
+_ABBREVIATIONS = (
+    (re.compile(r"\bd\s*&\s*a\b", re.I), ("depreciation", "amortization")),
+    (re.compile(r"\bp\s*&\s*l\b", re.I), ("income", "statement")),
+    (re.compile(r"\bsg\s*&\s*a\b", re.I), ("selling", "general", "administrative")),
+    (re.compile(r"\bpp\s*&\s*e\b", re.I), ("property", "plant", "equipment")),
+    (re.compile(r"\bppne\b", re.I), ("property", "plant", "equipment")),
+    (re.compile(r"\bm\s*&\s*a\b", re.I), ("acquisition", "acquired")),
+    (re.compile(r"\bfy\s*(\d{4})\b", re.I), "year"),
+    (re.compile(r"\bfiscal\s+(?:year\s+)?(\d{4})\b", re.I), "year"),
 )
+_STATEMENT_TITLES = {
+    "income": (
+        "consolidated statements of income",
+        "consolidated statement of income",
+        "consolidated statements of operations",
+        "consolidated statement of operations",
+        "consolidated statements of earnings",
+        "consolidated statement of earnings",
+        "statements of income",
+        "statement of income",
+        "statements of operations",
+        "statement of operations",
+        "statements of earnings",
+        "statement of earnings",
+    ),
+    "balance": (
+        "consolidated balance sheets",
+        "consolidated balance sheet",
+        "balance sheets",
+        "balance sheet",
+    ),
+    "cash": (
+        "consolidated statements of cash flows",
+        "consolidated statement of cash flows",
+        "statements of cash flows",
+        "statement of cash flows",
+    ),
+    "equity": (
+        "consolidated statements of equity",
+        "consolidated statement of equity",
+        "statement of equity",
+        "statements of equity",
+    ),
+}
+_SEARCH_LIMIT = 30
 
 
 class PDFDocumentInput(BaseModel):
@@ -89,7 +265,7 @@ def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
     try:
         reader = PdfReader(io.BytesIO(content))
         if reader.is_encrypted and reader.decrypt("") == 0:
-            raise ValueError("PDF document could not be decrypted")  # noqa: TRY003
+            raise ValueError("PDF document could not be decrypted")  # noqa: TRY003, TRY301
         pages = []
         for number, page in enumerate(reader.pages, start=1):
             extracted = page.extract_text(extraction_mode="plain") or ""
@@ -182,78 +358,372 @@ PDF_PAGE_SOURCE_DEFINITION: SourceDefinition[PDFPageInput, PDFPageSource, PDFPag
 )
 
 
+@dataclass(frozen=True)
+class _RetrievedPage:
+    """One memory hit anchored to a physical page when the source id says so."""
+
+    key: tuple[str, str, int] | tuple[str, str]
+    document_id: str
+    document_sha256: str
+    page_number: int | None
+    text: str
+    citation: MemoryCitation
+
+
 async def search_pdf_pages(memory, question: str, limit: int = 10) -> tuple[MemoryCitation, ...]:
     """Return up to ``limit`` distinct page citations for one natural-language question."""
 
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         raise ValueError("PDF page search limit must be a positive integer")  # noqa: TRY003
-    ranked: dict[tuple[str, str], tuple[float, object]] = {}
-    pool = max(limit, 40)
-    for query in _queries(question):
-        page = await memory.search(SearchMemoryRequest(query=query[:2000], mode="fts", limit=pool))
-        for rank, hit in enumerate(page.hits):
-            key = (hit.entry_id, hit.entry_version_id)
-            score = _overlap(question, hit.text) + (1.0 / (rank + 8))
-            current = ranked.get(key)
-            if current is None or score > current[0]:
-                ranked[key] = (score, hit)
-    ordered = sorted(ranked.values(), key=lambda item: (-item[0], item[1].entry_id))
-    citations: list[MemoryCitation] = []
-    seen: set[str] = set()
-    for _score, hit in ordered:
-        if hit.entry_id in seen:
-            continue
-        seen.add(hit.entry_id)
-        citations.append(
-            MemoryCitation(
-                memory_ref=hit.memory_ref,
-                entry_id=hit.entry_id,
-                entry_version_id=hit.entry_version_id,
-            )
-        )
-        if len(citations) == limit:
-            break
-    return tuple(citations)
-
-
-def _queries(question: str) -> tuple[str, ...]:
-    queries = [question]
-    numbers = _NUMBER.findall(question)
-    words = [word for word in _WORD.findall(question) if word.casefold() not in _STOP and len(word) > 3]
-    if numbers:
-        queries.append(" ".join(numbers[:12]))
-    unique_words: list[str] = []
-    for word in words:
-        if word.casefold() not in {item.casefold() for item in unique_words}:
-            unique_words.append(word)
-    for start in range(0, min(len(unique_words), 16), 4):
-        group = unique_words[start : start + 4]
-        if group:
-            queries.append(" ".join(group))
-    if numbers and unique_words:
-        queries.append(" ".join([*unique_words[:6], *numbers[:6]]))
-    deduped: list[str] = []
+    if not isinstance(question, str) or question.strip() == "":
+        return ()
+    kinds, probes = _routes(question)
+    queries = _build_queries(question, probes)
+    probe_keys = {" ".join(probe.split()) for probe in probes}
+    pages: dict[tuple[str, str, int] | tuple[str, str], _RetrievedPage] = {}
+    query_hits: list[tuple[float, tuple[tuple[str, str, int] | tuple[str, str], ...]]] = []
     for query in queries:
-        normalized = " ".join(query.split())
-        if normalized and normalized not in deduped:
-            deduped.append(normalized)
-    return tuple(deduped[:12])
+        try:
+            found = await memory.search(SearchMemoryRequest(query=query[:2000], mode="fts", limit=_SEARCH_LIMIT))
+        except (TypeError, ValueError):
+            continue
+        ordered: list[tuple[str, str, int] | tuple[str, str]] = []
+        for hit in found.hits:
+            page = await _retrieved_page(memory, hit)
+            if page is None:
+                continue
+            pages.setdefault(page.key, page)
+            if page.key not in ordered:
+                ordered.append(page.key)
+        weight = 3.0 if " ".join(query.split()) in probe_keys else 1.0
+        query_hits.append((weight, tuple(ordered)))
+    if not pages:
+        return ()
+    selected = _select_pages(question, tuple(pages.values()), kinds, query_hits)
+    return tuple(pages[key].citation for key in selected[:limit])
 
 
-def _overlap(question: str, text: str) -> float:
-    query_counts: dict[str, int] = defaultdict(int)
-    for token in _TOKEN.findall(question.casefold()):
-        query_counts[token] += 3 if token.isdigit() or token not in _STOP else 0.25
-    if not query_counts:
-        return 0.0
-    page_counts: dict[str, int] = defaultdict(int)
-    for token in _TOKEN.findall(text.casefold()):
-        page_counts[token] += 1
-    score = 0.0
-    for token, weight in query_counts.items():
-        if page_counts[token]:
-            score += weight * min(page_counts[token], 3)
-    return score
+def _question_terms(question: str) -> tuple[list[str], list[str]]:
+    extra: list[str] = []
+    years: list[str] = []
+    for pattern, replacement in _ABBREVIATIONS:
+        if replacement == "year":
+            years.extend(pattern.findall(question))
+        elif pattern.search(question):
+            extra.extend(replacement)
+    terms: list[str] = []
+    for term in [*_TOKEN.findall(question.lower()), *extra, *years]:
+        if term not in terms:
+            terms.append(term)
+    expanded: list[str] = []
+    for term in terms:
+        for synonym in _SYNONYMS.get(term, ()):
+            if synonym not in terms and synonym not in expanded:
+                expanded.append(synonym)
+    return terms, expanded
+
+
+def _routes(question: str) -> tuple[set[str], list[str]]:  # noqa: C901 - phrase routes stay explicit so each filing cue is reviewable.
+    lowered = question.lower()
+    kinds: set[str] = set()
+    probes: list[str] = []
+
+    def add(kind: str, *phrases: str) -> None:
+        kinds.add(kind)
+        probes.extend(phrases)
+
+    if any(phrase in lowered for phrase in ("quick ratio", "current ratio", "liquidity profile", "working capital")):
+        add("balance", "current assets", "cash equivalents", "balance sheets")
+    if "balance sheet" in lowered or "largest liability" in lowered or "largest asset" in lowered:
+        add("balance", "consolidated balance sheets", "current assets")
+    if "gross margin" in lowered or "gross profit" in lowered:
+        add(
+            "income",
+            "gross profit",
+            "cost of sales",
+            "cost of products",
+            "statements of earnings",
+            "percent to sales",
+            "results of operations",
+        )
+    if any(phrase in lowered for phrase in ("operating margin", "operating income", "ebitda", "unadjusted")):
+        add("income", "statements of income", "statements of operations", "operating income", "results of operations")
+        if any(phrase in lowered for phrase in ("ebitda", "d&a", "d & a", "depreciation", "capex")):
+            add("cash", "cash flows", "depreciation", "amortization")
+    if "net income" in lowered or "net earnings" in lowered:
+        add("income", "statements of income", "net income")
+    if "tax rate" in lowered or "effective tax" in lowered or "income tax" in lowered:
+        add("income", "effective tax", "income tax")
+    if "inventory" in lowered:
+        add("balance", "inventories")
+        add("income", "cost of sales", "cost of products")
+    if any(
+        phrase in lowered
+        for phrase in (
+            "capital-intensive",
+            "capital intensive",
+            "capex",
+            "capital expenditure",
+            "pp&e",
+            "ppne",
+            "property, plant",
+            "fixed asset",
+        )
+    ):
+        add("balance", "property plant")
+        add("cash", "cash flows", "capital expenditures")
+        add("income", "statements of income")
+    if "concentration" in lowered or "major customer" in lowered:
+        probes.extend(("customer", "accounted"))
+    if "primary customer" in lowered or ("customers" in lowered and "primary" in lowered):
+        probes.extend(("customers", "commercial"))
+    if "cyclical" in lowered:
+        probes.extend(("cyclical", "cyclicality", "seasonal"))
+    if "card member" in lowered:
+        probes.extend(("card member", "retention"))
+    if any(phrase in lowered for phrase in ("acquired", "acquisition", "acquisitions", "merger", "m&a")) and not any(
+        phrase in lowered for phrase in ("exclude", "excluding", "excludes", "excluded", "aside from")
+    ):
+        probes.extend(("acquisition", "acquired"))
+    if "segment" in lowered:
+        probes.extend(("business segment", "reportable segments", "segment"))
+    if ("revenue" in lowered or "revenues" in lowered) and any(
+        phrase in lowered for phrase in ("category", "categories", "percent", "%", "20")
+    ):
+        add("income", "segment", "revenues")
+    if any(phrase in lowered for phrase in ("legal", "litigation", "lawsuit")):
+        probes.append("legal proceedings")
+    if any(phrase in lowered for phrase in ("geograph", "region", "where operate", "operates in")):
+        probes.extend(("geographic", "reportable segments", "operations"))
+    unique: list[str] = []
+    for probe in probes:
+        if probe not in unique:
+            unique.append(probe)
+    return kinds, unique
+
+
+def _build_queries(question: str, probes: Sequence[str]) -> tuple[str, ...]:
+    terms, expanded = _question_terms(question)
+    content = [term for term in terms if term not in _STOP]
+    queries = [*probes, question]
+    for start in range(0, min(len(content), 12), 3):
+        queries.append(" ".join(content[start : start + 3]))
+    for start in range(0, len(expanded), 2):
+        queries.append(" ".join(expanded[start : start + 2]))
+    probe_keys: list[str] = []
+    for probe in probes:
+        key = " ".join(probe.split())
+        if key and key not in probe_keys:
+            probe_keys.append(key)
+    seen: set[str] = set()
+    rest: list[str] = []
+    for query in queries:
+        key = " ".join(query.split())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if key not in probe_keys:
+            rest.append(key)
+    return (*probe_keys, *rest[:10])
+
+
+def _select_pages(question, pages: Sequence[_RetrievedPage], kinds: set[str], query_hits) -> list:  # noqa: C901 - ranking mixes statement titles, probe order, and neighbors.
+    by_key = {page.key: page for page in pages}
+    terms, expanded = _question_terms(question)
+    term_set = set(terms)
+    content = [term for term in terms if term not in _STOP and not (term.isdigit() and len(term) == 4)]
+    years = [term for term in terms if term.isdigit() and len(term) == 4]
+    document_frequency: Counter[str] = Counter()
+    page_tokens: dict[object, Counter[str]] = {}
+    for page in pages:
+        counts = Counter(_TOKEN.findall(page.text.lower()))
+        page_tokens[page.key] = counts
+        document_frequency.update(counts)
+    total = max(len(pages), 1)
+
+    def idf(term: str) -> float:
+        return 1.0 + (total / (1 + document_frequency[term])) ** 0.5
+
+    reciprocal: dict[object, float] = defaultdict(float)
+    for weight, found in query_hits:
+        for rank, key in enumerate(found, start=1):
+            if key in by_key:
+                reciprocal[key] += weight / (10 + rank)
+    lexical_score: dict[object, float] = {}
+    for page in pages:
+        counts = page_tokens[page.key]
+        lowered = page.text.lower()
+        head = lowered[:200]
+        score = reciprocal[page.key] * 40
+        for term in content:
+            if counts[term]:
+                score += idf(term) * min(counts[term], 3) * (1.5 if term in head else 1)
+        for term in expanded:
+            if counts[term]:
+                score += 0.45 * idf(term) * min(counts[term], 2)
+        score += 0.25 * sum(1 for year in years if counts[year])
+        if "legal proceedings" in lowered and any(
+            term in term_set for term in ("legal", "litigation", "lawsuit", "lawsuits", "battles", "battle")
+        ):
+            score += 7 + min(counts.get("proceedings", 0), 3)
+        if "reportable segments" in lowered and any(
+            term in term_set
+            for term in ("geographies", "geography", "geographic", "segment", "segments", "operates", "operate")
+        ):
+            score += 8
+        if ("one customer" in lowered or "accounted for" in lowered) and (
+            "concentration" in term_set or "customer" in term_set
+        ):
+            score += 6
+        if "geographic operations" in lowered and any("geograph" in term for term in term_set):
+            score += 10
+        if any(
+            phrase in lowered[:700]
+            for phrase in ("business segment", "reportable operating segments", "reportable segments")
+        ) and any(term in term_set for term in ("segment", "segments", "category", "categories")):
+            score += 8
+        if "effective tax" in lowered and ("tax" in term_set or "effective" in term_set):
+            score += 12
+        if "card member" in lowered and any(term in term_set for term in ("card", "retention", "retain")):
+            score += 12
+        if (
+            lowered.find("results of operations") in range(400)
+            and any(
+                phrase in lowered
+                for phrase in ("operating expenses", "percent of net sales", "percent of sales", "cost of sales")
+            )
+            and any(term in term_set for term in ("margin", "margins", "operating", "expense", "expenses"))
+        ):
+            score += 22
+        if "depreciation and amortization" in lowered and any(
+            term in term_set for term in ("ebitda", "depreciation", "amortization", "capex")
+        ):
+            score += 8
+        lexical_score[page.key] = score
+    lexical = sorted(by_key, key=lambda key: (-lexical_score[key], _sort_key(key)))
+    selected: list = []
+
+    def push(key) -> None:
+        if key in by_key and key not in selected:
+            selected.append(key)
+
+    for kind in kinds:
+        found_titles: list[tuple[int, int, object]] = []
+        for page in pages:
+            position = _title_position(page.text, kind)
+            digits = sum(character.isdigit() for character in page.text)
+            if position is not None and position <= 120 and digits >= 80:
+                found_titles.append((position, digits, page.key))
+        if not found_titles:
+            continue
+        early = [item for item in found_titles if item[0] <= 70]
+        primary = max(early or found_titles, key=lambda item: (item[1], -item[0]))
+        push(primary[2])
+        push(_neighbor_key(by_key[primary[2]], 1, found_titles))
+    if any(term in term_set for term in ("margin", "margins", "operating")):
+        for key in lexical:
+            lowered = by_key[key].text.lower()
+            if lowered.find("results of operations") in range(400) and any(
+                phrase in lowered for phrase in ("operating expenses", "percent of net sales", "percent of sales")
+            ):
+                push(key)
+    probe_lists = [found for weight, found in query_hits if weight >= 3 and found]
+    added = 0
+    for rank in range(5):
+        for found in probe_lists:
+            if rank >= len(found):
+                continue
+            before = len(selected)
+            push(found[rank])
+            added += len(selected) - before
+            if added >= 10:
+                break
+        if added >= 10:
+            break
+    for key in lexical:
+        push(key)
+        if len(selected) >= 16:
+            break
+    for key in list(selected[:6]):
+        push(_neighbor_key(by_key[key], -1))
+        push(_neighbor_key(by_key[key], 1))
+    return selected
+
+
+def _title_position(text: str, kind: str) -> int | None:
+    lowered = text.lower()
+    best: int | None = None
+    for phrase in _STATEMENT_TITLES[kind]:
+        index = lowered.find(phrase)
+        if index >= 0 and (best is None or index < best):
+            best = index
+    return best
+
+
+def _neighbor_key(page: _RetrievedPage, offset: int, titled: Sequence[tuple[int, int, object]] | None = None):
+    if page.page_number is None:
+        return None
+    neighbor = (page.document_id, page.document_sha256, page.page_number + offset)
+    if titled is not None and all(item[2] != neighbor for item in titled):
+        return None
+    return neighbor
+
+
+def _sort_key(key) -> tuple:
+    if len(key) == 3:
+        return (key[0], key[2])
+    return (str(key[0]), 0)
+
+
+async def _retrieved_page(memory, hit) -> _RetrievedPage | None:
+    citation = MemoryCitation(
+        memory_ref=hit.memory_ref,
+        entry_id=hit.entry_id,
+        entry_version_id=hit.entry_version_id,
+    )
+    try:
+        record = await memory.get(GetMemoryEntryRequest(citation=citation))
+    except (TypeError, ValueError):
+        return None
+    identity = None
+    for reference in record.entry.sources:
+        identity = _identity_from_source_id(reference.source_id)
+        if identity is not None:
+            break
+    if identity is None:
+        return _RetrievedPage(
+            key=(hit.entry_id, hit.entry_version_id),
+            document_id="",
+            document_sha256="",
+            page_number=None,
+            text=hit.text,
+            citation=citation,
+        )
+    document_id, digest, page_number = identity
+    return _RetrievedPage(
+        key=(document_id, digest, page_number),
+        document_id=document_id,
+        document_sha256=digest,
+        page_number=page_number,
+        text=_page_body(hit.text, document_id),
+        citation=citation,
+    )
+
+
+def _identity_from_source_id(source_id: str) -> tuple[str, str, int] | None:
+    pieces = source_id.split(":")
+    if len(pieces) != 4 or pieces[0] != "pdf" or not pieces[3].isdigit():
+        return None
+    if not re.fullmatch(r"[0-9a-f]{64}", pieces[2]):
+        return None
+    return unquote(pieces[1]), pieces[2], int(pieces[3])
+
+
+def _page_body(text: str, document_id: str) -> str:
+    prefix = f"{document_id}\n"
+    if text.startswith(prefix):
+        return text[len(prefix) :]
+    return text
 
 
 def _validate_document_id(document_id: str) -> None:
