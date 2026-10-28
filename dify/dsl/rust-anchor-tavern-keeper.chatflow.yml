@@ -504,7 +504,7 @@ workflow:
             size: 6
         model:
           completion_params:
-            temperature: 0.3
+            temperature: 0
           mode: chat
           name: gpt-4o-mini
           provider: langgenius/openai/openai
@@ -548,6 +548,17 @@ workflow:
             # 输出
             {"reply":"对玩家说的话","should_remember":false,"memory_kind":"","memory_summary":"","reason":""}
             reason 不超过 80 个字。reply 里不要出现字段名。
+
+            # 硬性格式与态度（必须遵守）
+            - 整段输出只能是一个 JSON 对象，从第一个 { 到最后一个 }，前后不要有任何其它字、不要 Markdown。
+            - 当「仇账检索条数」≥ 1：reply 必须点名检索/准备上下文里的具体恶作剧（例如盐罐、糖、炖菜），可以加价或拒赊；禁止说「没听清」；禁止装成第一次见面。
+            - 当条数是 0 且准备上下文状态是 empty：reply 必须招呼客人并答应卖麦酒（一杯一个铜子）；禁止说「没听清」。
+            - should_remember 必须是 JSON 布尔 true/false。
+
+            # 记账白名单（覆盖其它冲动）
+            - 玩家只是点单、要酒、问路、问价、闲聊：should_remember 必须是 false，memory_kind 与 memory_summary 必须是空字符串。即使旧账很多也一样。
+            - 只有玩家本句明确在做新的恶作剧/捣鬼，或明确道歉并给出补偿时，should_remember 才可以为 true。
+            - 「老板，来一杯麦酒。」属于点单，绝对 false。
         selected: false
         title: 老疤
         type: llm

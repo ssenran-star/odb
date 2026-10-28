@@ -4,6 +4,8 @@
 
 这是 OceanBase 大赛 Dify 赛道「Just for Fun」的作品：Dify Chatflow 负责编排，PowerContext 负责跨会话记忆。没有使用 seekdb。
 
+2026-10-28 已在 Dify Cloud 导入并完成真实对话。工作室日志和 Web 对话截图在 `evidence/dify-run/`，轮次和页脚写在 [VERIFY.md](VERIFY.md)。
+
 ## 怎么玩
 
 打开导入后的 Chatflow，对老疤说话。
@@ -26,7 +28,7 @@
 
 一个 scope 对应一位旅人。演示用环境变量里的同一个 `scope_id`。换玩家就换 scope。scope 由运行脚本创建，不让模型填写。
 
-最小 Server 走全文检索。玩家下一句如果只是「来一杯麦酒」，这句话里没有旧账里的词，直接拿它当查询会什么都召不回。所以图里的检索和准备上下文都固定查询 `仇账`，写入的正文也一律带上这个标记。这个行为在本仓库的契约演练里对过本地 Server，见 [VERIFY.md](VERIFY.md)。
+最小 Server 走全文检索。玩家下一句如果只是「来一杯麦酒」，这句话里没有旧账里的词，直接拿它当查询会什么都召不回。所以图里的检索和准备上下文都固定查询 `仇账`，写入的正文也一律带上这个标记。这个行为在本仓库的契约演练里对过本地 Server。Dify Cloud 上的 HTTP 节点也打到了同一套 search、prepare、remember，见 [VERIFY.md](VERIFY.md)。
 
 ## 目录
 
@@ -39,6 +41,7 @@
 | `scripts/powercontext_contract.py` | 对真实 Server 做写入、检索、准备上下文 |
 | `scripts/dsl_nodes.py` | 从 DSL 里取出代码节点，保证演练请求和导入后的图一致 |
 | `evidence/powercontext-contract.json` | 2026-10-27 在本地 Server 上跑通契约的记录，不含 token |
+| `evidence/dify-run/` | 2026-10-28 Dify Cloud 真实对话和节点日志截图 |
 | `powercontext/docker-compose.yml` | 指向官方镜像构建方式的本机编排片段 |
 | `.env.example` | 占位变量，没有密钥 |
 

@@ -1,8 +1,43 @@
 # 验证样例
 
-评审按下面的顺序可以玩通主要功能，并核对 PowerContext 确实被写入、再被读回。模型的具体措辞可以不同。通过与否看态度有没有跟着仇账变化，以及 HTTP 节点里的记录。
+评审按下面的顺序可以玩通主要功能，并核对 PowerContext 确实被写入、再被读回。
 
-本环境没有启动 Dify，所以没有工作室导入和模型回复的截图。PowerContext 的读写已经对本地 Server 跑通，原始记录在 `evidence/powercontext-contract.json`。导入之后评审要做的点击写在最后一节。
+技术通过看这三件事。模型的具体措辞可以不同：
+
+1. Dify 的 HTTP 节点打到 PowerContext：`POST /v1/memory/search`、`POST /v1/context/prepare`、`POST /v1/memory/remember` 返回 200。
+2. 页脚的「写入前仇账 N 条」和「本轮新记」跟这一轮有没有写入一致。
+3. 换一场新的 Dify 对话，仍用同一个 `scope_id`，上一笔仇账仍能被检索和准备上下文读回。
+
+态度会不会跟着仇账变，写在下面的样例对话里，方便对照着玩。措辞不必逐字相同。
+
+2026-10-28 已在 Dify Cloud 走完真实对话，截图在 `evidence/dify-run/`。本地 Server 的读写契约仍在下一节，原始记录在 `evidence/powercontext-contract.json`。导入之后评审要做的点击写在最后一节。
+
+## Dify 云端真实对话（2026-10-28）
+
+已在 Dify Cloud 导入并发布 Chatflow「记仇的酒馆老板」，对话页 `https://udify.app/chat/sOX4UjWbZj3ekiUW`。
+模型：OpenAI gpt-4o-mini（AI Credits）。PowerContext 跑在选手本机，经 cloudflared http2 隧道供 Dify HTTP 节点调用。隧道主机名只出现在日志截图里，是当次临时地址，本文不抄录。仓库里没有 Bearer token。
+
+| 轮次 | 输入 | 页脚 | PowerContext 证据 |
+| --- | --- | --- | --- |
+| 1 | 老板，来一杯麦酒。 | 写入前仇账 0 条｜本轮新记：否 | 执行仇账检索与准备上下文；未记入 |
+| 2 | 我把盐罐换成了糖… | 写入前仇账 0 条｜本轮新记：是 | `POST /v1/memory/remember` HTTP 200，`kind=grudge`，`changed=true`（见 `evidence/dify-run/02-log-remember.png`） |
+| 3 | （新对话）老板，来一杯麦酒。 | 写入前仇账 1 条｜本轮新记：否 | search 命中盐罐仇账；prepare ready；未记入（见 `evidence/dify-run/03-log-search-prepare.png`） |
+
+随后加强提示词后，新会话点酒的 reply 已能点名「盐罐换成糖」（`evidence/dify-run/03b-new-session-remembers.png`）。当前 DSL 里「老疤」的温度为 0，并写了只输出一个 JSON、有旧账必须点名具体恶作剧、点单不记账这几条。截图均在 `evidence/dify-run/`。
+
+| 文件 | 画面里能看到的内容 |
+| --- | --- |
+| `evidence/dify-run/chat-ready.png` | 已发布的 Web 对话页。开场白、三条建议问题、「Start New chat」。还没有玩家输入 |
+| `evidence/dify-run/01-empty-order-beer.png` | 第一轮输入「老板，来一杯麦酒。」页脚「写入前仇账 0 条｜本轮新记：否」 |
+| `evidence/dify-run/02-prank-remember.png` | 同一会话继续输入盐罐换成糖。回复提到加价。页脚「写入前仇账 0 条｜本轮新记：是」 |
+| `evidence/dify-run/02-log-remember.png` | 该轮追踪：「记入仇账」为 `POST /v1/memory/remember`，HTTP 200，响应里 `changed` 为 true，`kind` 为 `grudge`，`family` 为 `atomic-memory`。右侧对话页脚仍是 0 条、本轮新记是 |
+| `evidence/dify-run/03-new-session-remembers.png` | 侧栏另起一条「老板，来一杯麦酒。」页脚「写入前仇账 1 条｜本轮新记：否」 |
+| `evidence/dify-run/03-log-search-prepare.png` | 该轮追踪：`POST /v1/memory/search` HTTP 200，`hits` 里有盐罐那笔 `grudge`；「准备上下文」已执行。右侧页脚仍是 1 条、本轮新记否 |
+| `evidence/dify-run/03b-new-session-remembers.png` | 加强提示词之后的新会话点酒。回复点名「盐罐换成糖」，并说到加价。这一张的页脚是「写入前仇账 1 条｜本轮新记：是」 |
+
+第 3 轮和第 2 轮不是同一条 Dify 会话：侧栏各有一条标题为「老板，来一杯麦酒。」的对话，scope 没有换，页脚从 0 条变成 1 条。`03b` 用来看加强提示词之后的回复措辞；跨会话「本轮新记：否」以 `03-new-session-remembers.png` 和 `03-log-search-prepare.png` 为准。
+
+技术结论：必须使用的 Dify + PowerContext 已在真实对话中跑通；跨会话同一 `scope_id` 可读回仇账。技术通过按本节开头的三条（HTTP 200、页脚、跨会话同一 scope）判断，模型措辞可以不同。
 
 ## 这次已经跑通的契约
 
@@ -110,7 +145,7 @@ remember 请求只有 `scope_id`、`kind`、`text`、`reason`。记录文件不�
 
 ## 评审导入后要做的事
 
-本仓库已经包含可导入的 DSL、占位配置和一次真实的 PowerContext 读写记录。评审这边还需要：
+本仓库已经包含可导入的 DSL、占位配置、`evidence/dify-run/` 里的 Dify Cloud 截图，以及一次本地 PowerContext 读写记录。评审若要在自己的环境再走一遍：
 
 1. 按 [RUN.md](RUN.md) 启动 PowerContext，导入 DSL，把「老疤」换成自己的对话模型，填入 `--init-scope` 给出的 `scope_id`。
 2. 按上一节走完第 1 到第 3 轮。第 3 轮必须是新对话。

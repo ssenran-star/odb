@@ -11,7 +11,7 @@
 | 项目 | 版本与说明 |
 | --- | --- |
 | Dify DSL | `0.3.0`，`advanced-chat`。2026-10-27 查到的 Dify `main` 当前 DSL 是 `0.7.0`（`api/constants/dsl_version.py`）。旧 DSL 可以导入，界面若提示版本较旧，确认继续 |
-| Dify 运行 | 能导入 DSL 0.3.0 的 Dify 1.x。本环境没有启动 Dify，工作室里的点击留给评审，见 [VERIFY.md](VERIFY.md) |
+| Dify 运行 | 能导入 DSL 0.3.0 的 Dify 1.x。2026-10-28 已在 Dify Cloud 导入、发布并走完三轮对话，截图在 `evidence/dify-run/`，说明见 [VERIFY.md](VERIFY.md) |
 | 对话模型 | 任意已安装的对话模型。DSL 里的占位是 `langgenius/openai/openai` / `gpt-4o-mini`。不需要 Embedding，也不需要 Rerank |
 | PowerContext | 2026-10-27 从 `github.com/oceanbase/powercontext` 的 `master` 安装。跑通记录里的 `package_version` 是 `1.4.2.dev4+gcdb8da296`。该进程的 `/openapi.json` 的 `info.version` 是 `1.4.1`，`/v1/server-info` 的 `api_contract_version` 是 1.4 |
 | Python | 官方要求 3.11+。本环境用 3.12.3 跑 Server 和脚本 |
@@ -31,6 +31,8 @@
 | `POWERCONTEXT_TOKEN` | 空 | 默认 Server 不填。开启鉴权后再填，并按下面「鉴权」改 HTTP 节点 |
 
 Dify 若支持把变量标成 Secret，把 token 标成 Secret。提交材料里保持空字符串。
+
+Dify Cloud，以及任何不和 PowerContext 跑在同一台机器上的 Dify，都访问不到只监听 `127.0.0.1` 的 Server。`POWERCONTEXT_URL` 要填 Dify 的 HTTP 节点能够访问的公网根地址：把 Server 部署到公网，或用隧道把本机端口暴露出去。不要带结尾斜杠，也不要带 `/v1`。仓库里的占位 `http://127.0.0.1:8000` 只适用于和 Server 在同一台机器上的 Dify。2026-10-28 的云端对话把本机 PowerContext 经 cloudflared 的 http2 隧道交给 Dify Cloud。隧道主机名不写入仓库。`--init-scope` 和 `POWERCONTEXT_SCOPE_ID` 的填法见下面「初始化 scope」，云端和本机同一套。
 
 ## 启动 PowerContext
 
@@ -69,6 +71,8 @@ https://github.com/oceanbase/powercontext/blob/master/docker/README.md
 端口发布在 `127.0.0.1:8000`。和脚本、浏览器在同一台机器上的 Dify 可以直接用这个地址。
 
 Dify 若跑在另一个容器里，它访问不到宿主机的 `127.0.0.1`。把两个容器接到同一个 Docker 网络，把 `POWERCONTEXT_URL` 设为 `http://powercontext-server:8000`。需要把端口暴露到宿主机之外时，先按官方部署文档开启 Bearer，再放宽发布地址。
+
+Dify Cloud 不在这台机器上，也走不到上面的 Docker 网络名。它使用环境变量一节里的公网 `POWERCONTEXT_URL`（隧道或已部署的 Server）。
 
 ## 初始化 scope
 
