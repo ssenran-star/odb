@@ -1,0 +1,124 @@
+{
+  "task": "任务：实现节日加班工资。\n规格要求 day_type 为 holiday 时，overtime_pay 按规格原文中的 HOLIDAY_MULTIPLIER 计算。\n请修改符号 overtime_pay，文件是 src/shiftpay.py。\n功能测试：test_holiday_overtime_uses_spec_multiplier。\n回归测试必须保持通过，文件 tests/test_regression_pay.py。\n",
+  "selected": [
+    {
+      "id": "8b80cf04e373d9cb2469",
+      "score": 63.0,
+      "lexical": 62.0,
+      "metadata": {
+        "kind": "spec",
+        "path": "docs/spec.md",
+        "role": "spec",
+        "symbol": "测试要求"
+      }
+    },
+    {
+      "id": "68d3884b2d8e73ac0767",
+      "score": 31.0,
+      "lexical": 30.0,
+      "metadata": {
+        "kind": "spec",
+        "path": "docs/spec.md",
+        "role": "spec",
+        "symbol": "节日加班"
+      }
+    },
+    {
+      "id": "de58a4b41848f3dccf12",
+      "score": 25.0,
+      "lexical": 24.0,
+      "metadata": {
+        "kind": "spec",
+        "path": "docs/spec.md",
+        "role": "spec",
+        "symbol": "概述"
+      }
+    },
+    {
+      "id": "33b8a250c13529bf1a5e",
+      "score": 13.833333333333334,
+      "lexical": 13.5,
+      "metadata": {
+        "kind": "spec",
+        "path": "docs/spec.md",
+        "role": "spec",
+        "symbol": "工作日加班"
+      }
+    },
+    {
+      "id": "3b5a7c275d67fcce35fa",
+      "score": 26.5,
+      "lexical": 25.5,
+      "metadata": {
+        "kind": "code",
+        "path": "src/shiftpay.py",
+        "role": "implementation",
+        "symbol": "overtime_pay"
+      }
+    },
+    {
+      "id": "a5642586f4972213daa2",
+      "score": 3.5,
+      "lexical": 3.0,
+      "metadata": {
+        "kind": "code",
+        "path": "src/parking.py",
+        "role": "decoy",
+        "symbol": "parking_fee"
+      }
+    },
+    {
+      "id": "12c9a4fa4d6eb401e3b1",
+      "score": 32.0,
+      "lexical": 31.5,
+      "metadata": {
+        "kind": "test",
+        "path": "tests/test_regression_pay.py",
+        "role": "regression",
+        "symbol": "test_regular_pay"
+      }
+    },
+    {
+      "id": "76651fd0ecbd92a3917a",
+      "score": 24.0,
+      "lexical": 23.0,
+      "metadata": {
+        "kind": "test",
+        "path": "tests/test_feature_holiday.py",
+        "role": "feature",
+        "symbol": "test_holiday_overtime_uses_spec_multiplier"
+      }
+    },
+    {
+      "id": "5296620d454c82895fbd",
+      "score": 3.3333333333333335,
+      "lexical": 3.0,
+      "metadata": {
+        "kind": "test",
+        "path": "tests/test_unrelated_parking.py",
+        "role": "decoy",
+        "symbol": "test_parking_fee"
+      }
+    }
+  ],
+  "symbols_to_change": [
+    {
+      "path": "src/shiftpay.py",
+      "symbol": "overtime_pay"
+    }
+  ],
+  "spec_documents": [
+    "path: docs/spec.md\nsymbol: 测试要求\nkind: spec\nrole: spec\n\n## 测试要求\n\n功能测试是 `tests/test_feature_holiday.py` 里的 `test_holiday_overtime_uses_spec_multiplier`。\n回归测试是 `tests/test_regression_pay.py`，修改后必须保持通过。\n需要修改的符号是 `overtime_pay`。\n",
+    "path: docs/spec.md\nsymbol: 节日加班\nkind: spec\nrole: spec\n\n## 节日加班\n\n当 `day_type == \"holiday\"` 时，倍数取下面这一行，不要改用别的数字：\n\n    HOLIDAY_MULTIPLIER = 3.0\n\n加班工资 = `round(hourly_rate * HOLIDAY_MULTIPLIER * overtime_hours, 2)`。\n示例：hourly_rate=100 且 overtime_hours=2 时结果为 600；hourly_rate=40 且 overtime_hours=1.5 时结果为 180。\n未知 `day_type` 必须抛出 `ValueError`。\n",
+    "path: docs/spec.md\nsymbol: 概述\nkind: spec\nrole: spec\n\n# 班次工资规格\n\n本规格定义 `src/shiftpay.py` 中的 `regular_pay` 与 `overtime_pay`。\n节日加班以「节日加班」一节的 `HOLIDAY_MULTIPLIER` 这一行为准。\n",
+    "path: docs/spec.md\nsymbol: 工作日加班\nkind: spec\nrole: spec\n\n## 工作日加班\n\n`day_type == \"weekday\"` 时，加班工资 = `round(hourly_rate * 1.5 * overtime_hours, 2)`。\n"
+  ],
+  "power": {
+    "status": "empty",
+    "action": "empty",
+    "fields": {},
+    "artifact_id": "",
+    "prepare_status": "empty",
+    "scope_id": "scp_5bb1yrzses6t9dq1tx93khw44t"
+  }
+}

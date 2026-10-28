@@ -1,0 +1,26 @@
+command: /workspace/minimax/.venv/bin/python -m pytest -q --tb=short tests/test_feature_holiday.py
+cwd: /workspace/minimax/sample
+exit_code: 1
+code_path: src/shiftpay.py
+code_sha256: 0538a1117194d2b4ebc2aa2fb02184f0f8a8e02aefaa825dc7cb129d1f424411
+python: 3.12.3
+git_head: d647275c308e09b7b623f322a26f5c4e85734fb0
+--- pytest stdout ---
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__________________ test_holiday_overtime_uses_spec_multiplier __________________
+tests/test_feature_holiday.py:6: in test_holiday_overtime_uses_spec_multiplier
+    assert overtime_pay(100, 2, "holiday") == 600.0
+E   AssertionError: assert 0.0 == 600.0
+E    +  where 0.0 = overtime_pay(100, 2, 'holiday')
+______________________ test_holiday_overtime_partial_hour ______________________
+tests/test_feature_holiday.py:10: in test_holiday_overtime_partial_hour
+    assert overtime_pay(40, 1.5, "holiday") == 180.0
+E   AssertionError: assert 0.0 == 180.0
+E    +  where 0.0 = overtime_pay(40, 1.5, 'holiday')
+=========================== short test summary info ============================
+FAILED tests/test_feature_holiday.py::test_holiday_overtime_uses_spec_multiplier
+FAILED tests/test_feature_holiday.py::test_holiday_overtime_partial_hour - As...
+2 failed in 0.01s
+
+--- pytest stderr ---

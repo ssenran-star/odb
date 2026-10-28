@@ -1,0 +1,2 @@
+pyseekdb==1.4.0.post1
+pytest==8.3.5

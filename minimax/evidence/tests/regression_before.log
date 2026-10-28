@@ -1,0 +1,12 @@
+command: /workspace/minimax/.venv/bin/python -m pytest -q --tb=short tests/test_regression_pay.py
+cwd: /workspace/minimax/sample
+exit_code: 0
+code_path: src/shiftpay.py
+code_sha256: 0538a1117194d2b4ebc2aa2fb02184f0f8a8e02aefaa825dc7cb129d1f424411
+python: 3.12.3
+git_head: d647275c308e09b7b623f322a26f5c4e85734fb0
+--- pytest stdout ---
+.....                                                                    [100%]
+5 passed in 0.00s
+
+--- pytest stderr ---

@@ -1,0 +1,15 @@
+{
+  "step": "A",
+  "minimax_called": false,
+  "todo": "evidence/TODO_MINIMAX.md",
+  "feature_before_exit": 1,
+  "regression_before_exit": 0,
+  "decoy_before_exit": 0,
+  "context_fresh": true,
+  "seekdb_queries": true,
+  "powercontext_empty": true,
+  "powercontext_reused": true,
+  "nonce": "3f66a2b0c2c44115a077370df0f925a2",
+  "code_sha256": "0538a1117194d2b4ebc2aa2fb02184f0f8a8e02aefaa825dc7cb129d1f424411",
+  "spec_sha256": "a8cb38b68c70162b734c291e4e3f351701f3b124641faaca5c374ac27cd2b45b"
+}

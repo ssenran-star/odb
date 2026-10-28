@@ -1,0 +1,20 @@
+{
+  "status": "empty",
+  "action": "empty",
+  "fields": {},
+  "artifact_id": "",
+  "prepare_status": "empty",
+  "prepare_text": "",
+  "scope_id": "scp_5bb1yrzses6t9dq1tx93khw44t",
+  "search": {
+    "mode": "text",
+    "hits": []
+  },
+  "prepare": {
+    "schema": "powercontext.prepared-context.v1",
+    "status": "empty",
+    "content": null,
+    "content_bytes": 0
+  },
+  "used_state": false
+}

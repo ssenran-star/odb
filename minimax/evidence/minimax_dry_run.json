@@ -1,0 +1,6 @@
+{
+  "dry_run": true,
+  "minimax_called": false,
+  "model": "MiniMax-M3",
+  "base_url": "https://api.minimax.io/v1"
+}
