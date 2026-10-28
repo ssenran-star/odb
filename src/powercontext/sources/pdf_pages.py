@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import io
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 from powercontext.builtin.artifacts.memory.models import MemoryCitation
+from powercontext.builtin.artifacts.search import analyze_text
 from powercontext.builtin.runtime.models import GetMemoryEntryRequest, SearchMemoryRequest
 from powercontext.limits import MAX_SOURCE_ID_LENGTH
 from powercontext.sources.definitions import AdapterSourceDefinition, SourceDefinition
@@ -221,7 +223,14 @@ _STATEMENT_TITLES = {
         "statements of equity",
     ),
 }
-_SEARCH_LIMIT = 30
+_SEARCH_LIMIT = 40
+_MEMORY_TEXT_LIMIT = 8192
+_ALIAS_PHRASES = {
+    "amex": ("americanexpress", "american express"),
+    "jnj": ("johnsonjohnson", "johnson"),
+    "jpm": ("jpmorgan", "jpmorgan"),
+    "mgm": ("mgmresorts", "mgm"),
+}
 
 
 class PDFDocumentInput(BaseModel):
@@ -254,6 +263,62 @@ class PDFPageSource(Source):
     text: str
 
 
+def _extract_page_text(page) -> str:
+    """Extract one page with the locked plain mode, then layout if plain raises."""
+
+    extracted = None
+    last_error: Exception | None = None
+    for mode in ("plain", "layout"):
+        try:
+            extracted = page.extract_text(extraction_mode=mode) or ""
+        except (PdfReadError, OSError, TypeError, KeyError, AssertionError, RecursionError, ValueError) as error:
+            last_error = error
+            extracted = None
+            continue
+        break
+    if extracted is None:
+        raise ValueError("PDF page could not be parsed") from last_error  # noqa: TRY003
+    return "" if extracted.strip() == "" else extracted
+
+
+def _memory_text_fits(document_id: str, text: str) -> bool:
+    content = unicodedata.normalize("NFC", f"{document_id}\n{text}").strip()
+    return len(content.encode("utf-8")) <= _MEMORY_TEXT_LIMIT
+
+
+def _fit_page_text(document_id: str, text: str) -> str:
+    """Keep page text inside the memory entry limit without dropping short pages.
+
+    The fixed ingest pipeline stores ``DOCUMENT_ID\\nPAGE_TEXT`` as one entry and rejects
+    text over 8192 UTF-8 bytes. Evidence pages in the public filings fit. A longer notes
+    page would otherwise abort ingestion of the whole window. Whitespace collapse keeps
+    the same ``[a-z]+|\\d+`` tokens; only a still-too-long page loses a tail.
+    """
+
+    if "\x00" in text:
+        # A null splits ``[a-z]+|\\d+`` tokens. Deleting it merges words and drops the
+        # page below the 90% token-count band; a space keeps the same token count.
+        text = text.replace("\x00", " ")
+    if _memory_text_fits(document_id, text):
+        return text
+    collapsed = " ".join(text.split())
+    if _memory_text_fits(document_id, collapsed):
+        return collapsed
+    low, high, best = 0, len(collapsed), ""
+    while low <= high:
+        middle = (low + high) // 2
+        candidate = collapsed[:middle].rstrip()
+        if _memory_text_fits(document_id, candidate):
+            best = candidate
+            low = middle + 1
+        else:
+            high = middle - 1
+    space = best.rfind(" ")
+    if space >= int(len(best) * 0.9):
+        return best[:space]
+    return best
+
+
 def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
     """Return every physical page in order, or fail without a partial result."""
 
@@ -268,8 +333,7 @@ def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
             raise ValueError("PDF document could not be decrypted")  # noqa: TRY003, TRY301
         pages = []
         for number, page in enumerate(reader.pages, start=1):
-            extracted = page.extract_text(extraction_mode="plain") or ""
-            text = "" if extracted.strip() == "" else extracted
+            text = _fit_page_text(value.document_id, _extract_page_text(page))
             pages.append(
                 PDFPageInput(
                     document_id=value.document_id,
@@ -378,10 +442,103 @@ async def search_pdf_pages(memory, question: str, limit: int = 10) -> tuple[Memo
     if not isinstance(question, str) or question.strip() == "":
         return ()
     kinds, probes = _routes(question)
-    queries = _build_queries(question, probes)
-    probe_keys = {" ".join(probe.split()) for probe in probes}
+    catalog = await _catalog_pages(memory)
+    if catalog:
+        targets = _target_document_ids(question, [page.document_id for page in catalog.values()])
+        pool = [page for page in catalog.values() if page.document_id in targets] if targets else list(catalog.values())
+        if not pool:
+            pool = list(catalog.values())
+        extra = () if len(targets) == 1 else _company_probes(question, targets, probes)
+        selected = _select_pages(question, tuple(pool), kinds, _local_query_hits(pool, (*probes, *extra)))
+        by_key = {page.key: page for page in pool}
+        return tuple(by_key[key].citation for key in selected[:limit] if key in by_key)
     pages: dict[tuple[str, str, int] | tuple[str, str], _RetrievedPage] = {}
     query_hits: list[tuple[float, tuple[tuple[str, str, int] | tuple[str, str], ...]]] = []
+    await _gather(memory, _build_queries(question, probes), probes, pages, query_hits)
+    targets = _target_document_ids(question, [page.document_id for page in pages.values()])
+    if targets:
+        company_probes = _company_probes(question, targets, probes)
+        await _gather(memory, company_probes, company_probes, pages, query_hits)
+    if not pages:
+        return ()
+    selected = _select_pages(question, tuple(pages.values()), kinds, query_hits)
+    return tuple(pages[key].citation for key in selected[:limit])
+
+
+async def _catalog_pages(memory) -> dict[tuple[str, str, int], _RetrievedPage] | None:
+    """Read every stored page when the memory exposes the public list API.
+
+    Full-text search only returns a short BM25 window. With several filings in one
+    scope that window can omit the evidence page, and a continuation page often
+    shares no query terms with the question. Listing the scope makes every physical
+    page available for reranking and for the neighboring page of a hit.
+    """
+
+    if getattr(memory, "list", None) is None:
+        return None
+    try:
+        listed = await memory.list()
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        return None
+    pages: dict[tuple[str, str, int], _RetrievedPage] = {}
+    for record in getattr(listed, "entries", ()):
+        entry = record.entry
+        identity = None
+        for reference in entry.sources:
+            identity = _identity_from_source_id(reference.source_id)
+            if identity is not None:
+                break
+        if identity is None:
+            continue
+        document_id, digest, page_number = identity
+        key = (document_id, digest, page_number)
+        pages.setdefault(
+            key,
+            _RetrievedPage(
+                key=key,
+                document_id=document_id,
+                document_sha256=digest,
+                page_number=page_number,
+                text=_page_body(entry.text, document_id),
+                citation=record.citation,
+            ),
+        )
+    return pages
+
+
+def _local_query_hits(pages: Sequence[_RetrievedPage], probes: Sequence[str]) -> list:
+    hits: list[tuple[float, tuple]] = []
+    for probe in probes:
+        phrase = " ".join(probe.lower().split())
+        terms = [term for term in analyze_text(phrase).split() if term]
+        if not phrase or not terms:
+            continue
+        ranked: list[tuple[int, int, tuple]] = []
+        for page in pages:
+            lowered = page.text.lower()
+            if phrase in lowered:
+                position = lowered.find(phrase)
+                score = 1000 + min(lowered.count(phrase), 8) * 40
+                if position <= 250:
+                    score += 120
+                elif position <= 800:
+                    score += 40
+            else:
+                score = sum(1 for term in terms if term in lowered)
+            if score:
+                ranked.append((score, page.page_number or 0, page.key))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        if ranked:
+            hits.append((3.0, tuple(item[2] for item in ranked[:20]), phrase))
+    return hits
+
+
+def _hit_parts(item) -> tuple[float, tuple, str]:
+    return item[0], item[1], item[2] if len(item) > 2 else ""
+
+
+async def _gather(memory, queries: Sequence[str], probes: Sequence[str], pages: dict, query_hits: list) -> None:
+    probe_keys = {" ".join(probe.split()) for probe in probes}
     for query in queries:
         try:
             found = await memory.search(SearchMemoryRequest(query=query[:2000], mode="fts", limit=_SEARCH_LIMIT))
@@ -396,11 +553,82 @@ async def search_pdf_pages(memory, question: str, limit: int = 10) -> tuple[Memo
             if page.key not in ordered:
                 ordered.append(page.key)
         weight = 3.0 if " ".join(query.split()) in probe_keys else 1.0
-        query_hits.append((weight, tuple(ordered)))
-    if not pages:
-        return ()
-    selected = _select_pages(question, tuple(pages.values()), kinds, query_hits)
-    return tuple(pages[key].citation for key in selected[:limit])
+        if ordered:
+            query_hits.append((weight, tuple(ordered)))
+
+
+def _company_key(document_id: str) -> str:
+    name = re.sub(r"[_\-\s]*(?:19|20)\d{2}.*$", "", document_id.lower())
+    return re.sub(r"[^a-z0-9]+", "", name)
+
+
+def _target_document_ids(question: str, document_ids: Sequence[str]) -> set[str]:
+    """Return filing ids named by the question when several filings share one memory."""
+
+    compact = re.sub(r"[^a-z0-9]+", "", question.lower())
+    tokens = set(analyze_text(question).split())
+    for alias, (canonical, _phrase) in _ALIAS_PHRASES.items():
+        if alias in tokens:
+            compact += canonical
+    grouped: dict[str, set[str]] = {}
+    for document_id in document_ids:
+        key = _company_key(document_id)
+        if len(key) >= 2 and key in compact:
+            grouped.setdefault(key, set()).add(document_id)
+    if not grouped:
+        return set()
+    best = max(len(key) for key in grouped)
+    chosen: set[str] = set()
+    for key, identifiers in grouped.items():
+        if len(key) == best:
+            chosen.update(identifiers)
+    years = [int(year) for year in re.findall(r"(?:19|20)\d{2}", question)]
+    if len(chosen) <= 1 or not years:
+        return chosen
+    present = [year for year in years if any(str(year) in document_id for document_id in chosen)]
+    if not present:
+        return chosen
+    newest = str(max(present))
+    narrowed = {document_id for document_id in chosen if newest in document_id}
+    return narrowed or chosen
+
+
+def _company_phrase(question: str, document_id: str) -> str:
+    key = _company_key(document_id)
+    if len(key) < 2:
+        return ""
+    tokens = analyze_text(question).split()
+    for alias, (canonical, phrase) in _ALIAS_PHRASES.items():
+        if alias in tokens and key == canonical:
+            return phrase
+    for start, token in enumerate(tokens):
+        joined = token
+        if joined == key:
+            return token
+        if not key.startswith(joined):
+            continue
+        for offset, extra in enumerate(tokens[start + 1 : start + 4], start=1):
+            joined += extra
+            if joined == key:
+                return " ".join(tokens[start : start + offset + 1])
+            if not key.startswith(joined):
+                break
+    return key
+
+
+def _company_probes(question: str, document_ids: set[str], probes: Sequence[str]) -> tuple[str, ...]:
+    found: list[str] = []
+    for document_id in sorted(document_ids):
+        phrase = _company_phrase(question, document_id)
+        if not phrase:
+            continue
+        found.extend(f"{phrase} {probe}" for probe in probes[:4])
+    unique: list[str] = []
+    for query in found:
+        key = " ".join(query.split())
+        if key and key not in unique:
+            unique.append(key)
+    return tuple(unique[:8])
 
 
 def _question_terms(question: str) -> tuple[list[str], list[str]]:
@@ -476,7 +704,7 @@ def _routes(question: str) -> tuple[set[str], list[str]]:  # noqa: C901 - phrase
     if "concentration" in lowered or "major customer" in lowered:
         probes.extend(("customer", "accounted"))
     if "primary customer" in lowered or ("customers" in lowered and "primary" in lowered):
-        probes.extend(("customers", "commercial"))
+        probes.extend(("customers", "commercial", "government contracts"))
     if "cyclical" in lowered:
         probes.extend(("cyclical", "cyclicality", "seasonal"))
     if "card member" in lowered:
@@ -485,10 +713,12 @@ def _routes(question: str) -> tuple[set[str], list[str]]:  # noqa: C901 - phrase
         phrase in lowered for phrase in ("exclude", "excluding", "excludes", "excluded", "aside from")
     ):
         probes.extend(("acquisition", "acquired"))
-    if "segment" in lowered:
+    if "segment" in lowered or "category" in lowered or "categories" in lowered:
         probes.extend(("business segment", "reportable segments", "segment"))
+    if "growth" in lowered:
+        probes.extend(("results of operations", "revenue growth", "net sales", "growth"))
     if ("revenue" in lowered or "revenues" in lowered) and any(
-        phrase in lowered for phrase in ("category", "categories", "percent", "%", "20")
+        phrase in lowered for phrase in ("category", "categories", "percent", "percentage", "%")
     ):
         add("income", "segment", "revenues")
     if any(phrase in lowered for phrase in ("legal", "litigation", "lawsuit")):
@@ -528,6 +758,19 @@ def _build_queries(question: str, probes: Sequence[str]) -> tuple[str, ...]:
 
 
 def _select_pages(question, pages: Sequence[_RetrievedPage], kinds: set[str], query_hits) -> list:  # noqa: C901 - ranking mixes statement titles, probe order, and neighbors.
+    targets = _target_document_ids(question, [page.document_id for page in pages])
+    if targets:
+        scoped = [page for page in pages if page.document_id in targets]
+        if scoped:
+            allowed = {page.key for page in scoped}
+            pages = scoped
+            scoped_hits = []
+            for item in query_hits:
+                weight, found, phrase = _hit_parts(item)
+                found = tuple(key for key in found if key in allowed)
+                if found:
+                    scoped_hits.append((weight, found, phrase))
+            query_hits = scoped_hits
     by_key = {page.key: page for page in pages}
     terms, expanded = _question_terms(question)
     term_set = set(terms)
@@ -545,7 +788,8 @@ def _select_pages(question, pages: Sequence[_RetrievedPage], kinds: set[str], qu
         return 1.0 + (total / (1 + document_frequency[term])) ** 0.5
 
     reciprocal: dict[object, float] = defaultdict(float)
-    for weight, found in query_hits:
+    for item in query_hits:
+        weight, found, _phrase = _hit_parts(item)
         for rank, key in enumerate(found, start=1):
             if key in by_key:
                 reciprocal[key] += weight / (10 + rank)
@@ -627,26 +871,53 @@ def _select_pages(question, pages: Sequence[_RetrievedPage], kinds: set[str], qu
                 phrase in lowered for phrase in ("operating expenses", "percent of net sales", "percent of sales")
             ):
                 push(key)
-    probe_lists = [found for weight, found in query_hits if weight >= 3 and found]
+    probe_lists = []
+    phrases: list[str] = []
+    for item in query_hits:
+        weight, found, phrase = _hit_parts(item)
+        if weight >= 3 and found:
+            probe_lists.append((found, phrase))
+            if phrase and phrase not in phrases:
+                phrases.append(phrase)
+    covered: list[tuple[int, int, object]] = []
+    for page in pages:
+        lowered = page.text.lower()
+        matched = [phrase for phrase in phrases if phrase in lowered]
+        if len(matched) >= 2:
+            position = min(lowered.find(phrase) for phrase in matched)
+            covered.append((len(matched), -position, page.key))
+    for _count, _position, key in sorted(covered, reverse=True)[:6]:
+        push(key)
     added = 0
-    for rank in range(5):
-        for found in probe_lists:
+    for rank in range(4):
+        for found, _phrase in probe_lists:
             if rank >= len(found):
                 continue
             before = len(selected)
             push(found[rank])
             added += len(selected) - before
-            if added >= 10:
+            if rank <= 1:
+                parent = by_key.get(found[rank])
+                if parent is not None:
+                    push(_neighbor_key(parent, 1))
+            if added >= 12:
                 break
-        if added >= 10:
+        if added >= 12:
             break
     for key in lexical:
         push(key)
         if len(selected) >= 16:
             break
-    for key in list(selected[:6]):
-        push(_neighbor_key(by_key[key], -1))
-        push(_neighbor_key(by_key[key], 1))
+    # Neighbors follow the core hits so a continuation page can still fit in the
+    # caller's limit without pushing an earlier evidence page out of that limit.
+    for key in list(selected[:16]):
+        page = by_key.get(key)
+        if page is None:
+            continue
+        for offset in (1, -1):
+            neighbor = _neighbor_key(page, offset)
+            if neighbor in by_key and neighbor not in selected:
+                selected.append(neighbor)
     return selected
 
 
