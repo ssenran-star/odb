@@ -40,6 +40,22 @@ export interface HistoryItem {
   food?: Food;
 }
 
+export interface ServiceCheck {
+  status: "connected" | "disconnected" | "unconfigured";
+  configured: boolean;
+  detail?: string | null;
+}
+
+export interface ServiceStatus {
+  ok: boolean;
+  mode: "demo" | "configured";
+  receivedPath?: string;
+  services: {
+    seekdb: ServiceCheck & { host?: string | null; port?: number | null };
+    powerContext: ServiceCheck & { scopeId?: string | null; searchMode?: string | null; hitCount?: number | null };
+  };
+}
+
 export const api = {
   async getFoods(filters?: { category?: string; spicyLevel?: number; priceRange?: string }): Promise<Food[]> {
     const params = new URLSearchParams();
@@ -101,5 +117,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ foodId, liked }),
     });
+  },
+
+  async clearHistory(userId?: string): Promise<void> {
+    const params = userId ? `?userId=${userId}` : "";
+    await requestJson<ApiResponse<unknown>>(`${API_BASE}/api/user/history/clear${params}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  async getServiceStatus(): Promise<ServiceStatus> {
+    return requestJson<ServiceStatus>(`${API_BASE}/api/services/status`);
   },
 };

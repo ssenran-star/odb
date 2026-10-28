@@ -8,7 +8,8 @@ import { FoodCard } from "./components/FoodCard";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { FilterPanel } from "./components/FilterPanel";
 import { SearchResults } from "./components/SearchResults";
-import { api, type HistoryItem } from "./lib/api";
+import { AboutPanel } from "./components/AboutPanel";
+import { api, type HistoryItem, type ServiceStatus } from "./lib/api";
 
 const USER_ID = "user_" + (localStorage.getItem("userId") || (() => {
   const id = Math.random().toString(36).slice(2);
@@ -27,22 +28,45 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<Food[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [useBackend, setUseBackend] = useState(true);
+  const [serviceStatus, setServiceStatus] = useState<ServiceStatus | null>(null);
+  const [statusState, setStatusState] = useState<"loading" | "ready" | "unreachable">("loading");
+
+  const readLocalHistory = (): HistoryItem[] => {
+    const saved = localStorage.getItem("food-history");
+    if (!saved) return [];
+    try { return JSON.parse(saved) as HistoryItem[]; } catch { return []; }
+  };
 
   useEffect(() => {
-    loadHistory();
-  }, []);
-
-  const loadHistory = async () => {
-    try {
-      const data = await api.getHistory(USER_ID);
-      setHistory(data);
-    } catch {
-      const saved = localStorage.getItem("food-history");
-      if (saved) {
-        try { setHistory(JSON.parse(saved)); } catch { /* ignore */ }
-      }
+    if (!useBackend) {
+      setHistory(readLocalHistory());
+      return;
     }
-  };
+    let cancelled = false;
+    setStatusState("loading");
+    (async () => {
+      let status: ServiceStatus | null = null;
+      try {
+        status = await api.getServiceStatus();
+        if (cancelled) return;
+        setServiceStatus(status);
+        setStatusState("ready");
+      } catch {
+        if (cancelled) return;
+        setServiceStatus(null);
+        setStatusState("unreachable");
+      }
+      try {
+        const items = await api.getHistory(USER_ID);
+        if (cancelled) return;
+        if (status?.services.powerContext.status === "connected") setHistory(items);
+        else setHistory(items.length > 0 ? items : readLocalHistory());
+      } catch {
+        if (!cancelled) setHistory(readLocalHistory());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [useBackend]);
 
   const saveHistory = (items: HistoryItem[]) => {
     localStorage.setItem("food-history", JSON.stringify(items));
@@ -140,6 +164,42 @@ export default function App() {
   const handleClearHistory = async () => {
     setHistory([]);
     localStorage.removeItem("food-history");
+    if (!useBackend) return;
+    try {
+      await api.clearHistory(USER_ID);
+    } catch { /* local history is already cleared */ }
+  };
+
+  const powerStatus = serviceStatus?.services.powerContext.status;
+  const seekStatus = serviceStatus?.services.seekdb.status;
+  const powerConnected = useBackend && statusState === "ready" && powerStatus === "connected";
+  const seekConnected = useBackend && statusState === "ready" && seekStatus === "connected";
+
+  const connectionLabel = () => {
+    if (!useBackend) return "本地模式：不调用后端";
+    if (statusState === "loading") return "正在检查服务状态…";
+    if (statusState === "unreachable") return "后端未连通，当前为本地演示";
+    const connected = [
+      powerConnected ? "PowerContext" : null,
+      seekConnected ? "seekdb" : null,
+    ].filter(Boolean);
+    if (connected.length > 0) return `已连接 ${connected.join(" + ")}`;
+    if (powerStatus === "disconnected" || seekStatus === "disconnected") {
+      return "服务已配置但未连通，当前请求会回退到本地演示";
+    }
+    return "演示模式：未配置 PowerContext / seekdb";
+  };
+
+  const storageLabel = () => {
+    if (powerConnected) return "偏好与历史：PowerContext";
+    return "偏好与历史：本机浏览器";
+  };
+
+  const searchLabel = () => {
+    if (!useBackend || statusState === "unreachable") return "本地关键词搜索";
+    if (statusState === "loading") return "正在确认搜索后端…";
+    if (seekConnected) return "使用 seekdb 语义搜索";
+    return "关键词搜索（seekdb 未连接）";
   };
 
   return (
@@ -149,7 +209,12 @@ export default function App() {
           🍽️ 今天吃什么
         </h1>
         <p className="text-muted-foreground">选择困难症终结者，转一转就知道</p>
-        <div className="mt-3 flex justify-center gap-2">
+      </div>
+
+      <AboutPanel />
+
+      <div className="mb-8 text-center">
+        <div className="flex justify-center gap-2">
           <Button
             variant={useBackend ? "default" : "outline"}
             size="sm"
@@ -181,9 +246,7 @@ export default function App() {
               {isSearching ? "搜索中..." : "🔍 搜索"}
             </Button>
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {useBackend ? "使用 seekdb 语义搜索" : "本地关键词搜索"}
-          </p>
+          <p className="mt-2 text-xs text-muted-foreground">{searchLabel()}</p>
         </CardContent>
       </Card>
 
@@ -233,12 +296,8 @@ export default function App() {
       />
 
       <div className="mt-8 text-center text-xs text-muted-foreground">
-        <p>
-          {useBackend ? "✨ 已连接 seekdb + PowerContext" : "📱 本地模式运行中"}
-        </p>
-        <p className="mt-1">
-          数据存储：{useBackend ? "云端" : "本地浏览器"}
-        </p>
+        <p>{connectionLabel()}</p>
+        <p className="mt-1">{storageLabel()}</p>
       </div>
     </main>
   );

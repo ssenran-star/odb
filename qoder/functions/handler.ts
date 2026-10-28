@@ -1,286 +1,411 @@
 import { foods, categories, type Food } from "./data.ts";
+import { isKnownRoute, normalizeApiPath } from "./routing.mjs";
 import { SeekDBClient, SeekDBLocalClient, type FoodDocument, type SearchResult } from "./seekdb-client.ts";
-import { PowerContextClient, PowerContextLocalClient, type UserPreferences, type HistoryItem } from "./powercontext-client.ts";
+import { PowerContextClient, PowerContextLocalClient, type HistoryItem, type UserPreferences } from "./powercontext-client.ts";
+import { SERVICE_ENV_KEYS, serviceConfigFrom, type ServiceConfig } from "./service-config.ts";
 
-// 配置：设置为 true 使用真实的 seekdb/PowerContext 服务
-// 设置为 false 使用本地模拟（演示模式）
-const USE_REAL_SERVICES = false;
+const localSeek = new SeekDBLocalClient(foods as FoodDocument[]);
+const localPower = new PowerContextLocalClient();
 
-// seekdb 配置
-const SEEKDB_CONFIG = {
-  host: Deno.env.get("SEEKDB_HOST") || "127.0.0.1",
-  port: parseInt(Deno.env.get("SEEKDB_PORT") || "2881"),
-  user: Deno.env.get("SEEKDB_USER") || "root",
-  password: Deno.env.get("SEEKDB_PASSWORD") || "",
-  database: Deno.env.get("SEEKDB_DATABASE") || "food_app",
-};
+let cachedPower: { key: string; client: PowerContextClient } | null = null;
+let cachedSeek: { key: string; client: SeekDBClient } | null = null;
 
-// PowerContext 配置
-const POWERCONTEXT_CONFIG = {
-  baseUrl: Deno.env.get("POWERCONTEXT_URL") || "http://127.0.0.1:8000",
-  scope: Deno.env.get("POWERCONTEXT_SCOPE") || "what-to-eat",
-};
+function currentConfig(): ServiceConfig {
+  const raw: Record<string, string | undefined> = {};
+  for (const key of SERVICE_ENV_KEYS) raw[key] = Deno.env.get(key);
+  return serviceConfigFrom(raw);
+}
 
-// 初始化客户端
-let seekdb: SeekDBClient | SeekDBLocalClient;
-let powerContext: PowerContextClient | PowerContextLocalClient;
+function foodName(id: string): string {
+  return foods.find((food) => food.id === id)?.name ?? id;
+}
 
-if (USE_REAL_SERVICES) {
-  seekdb = new SeekDBClient(SEEKDB_CONFIG);
-  powerContext = new PowerContextClient(POWERCONTEXT_CONFIG);
-  
-  // 初始化 seekdb 数据
-  (async () => {
-    try {
-      const foodDocs: FoodDocument[] = foods.map((f) => ({
-        id: f.id,
-        name: f.name,
-        category: f.category,
-        tags: f.tags,
-        description: f.description,
-        emoji: f.emoji,
-        priceRange: f.priceRange,
-        spicy: f.spicy,
-        healthScore: f.healthScore,
-      }));
-      await seekdb.addFoods(foodDocs);
-      console.log("seekdb 数据初始化完成");
-    } catch (error) {
-      console.error("seekdb 初始化失败:", error);
+function runtime() {
+  const config = currentConfig();
+  let power: PowerContextClient | null = null;
+  if (config.powerContext) {
+    const key = JSON.stringify(config.powerContext);
+    if (!cachedPower || cachedPower.key !== key) {
+      cachedPower = {
+        key,
+        client: new PowerContextClient({ ...config.powerContext, foodName }),
+      };
     }
-  })();
-} else {
-  seekdb = new SeekDBLocalClient(foods as FoodDocument[]);
-  powerContext = new PowerContextLocalClient();
+    power = cachedPower.client;
+  }
+  let seek: SeekDBClient | null = null;
+  if (config.seekdb) {
+    const key = `${config.seekdb.host}:${config.seekdb.port}`;
+    if (!cachedSeek || cachedSeek.key !== key) {
+      cachedSeek = { key, client: new SeekDBClient(config.seekdb) };
+    }
+    seek = cachedSeek.client;
+  }
+  return { config, power, seek };
+}
+
+function requestTarget(request: Request): { pathname: string; searchParams: URLSearchParams } {
+  try {
+    const url = new URL(request.url);
+    return { pathname: url.pathname, searchParams: url.searchParams };
+  } catch {
+    const raw = request.url || "/";
+    const query = raw.indexOf("?");
+    return {
+      pathname: query >= 0 ? raw.slice(0, query) : raw,
+      searchParams: new URLSearchParams(query >= 0 ? raw.slice(query + 1) : ""),
+    };
+  }
+}
+
+function resolveRoute(request: Request): { path: string; receivedPath: string; searchParams: URLSearchParams } {
+  const { pathname, searchParams } = requestTarget(request);
+  let path = normalizeApiPath(pathname);
+  if (!isKnownRoute(path)) {
+    const forwarded = [
+      request.headers.get("x-forwarded-uri"),
+      request.headers.get("x-original-uri"),
+      request.headers.get("x-forwarded-path"),
+      request.headers.get("x-invoke-path"),
+    ];
+    for (const candidate of forwarded) {
+      if (!candidate) continue;
+      const normalized = normalizeApiPath(candidate);
+      if (isKnownRoute(normalized)) {
+        path = normalized;
+        break;
+      }
+    }
+  }
+  return { path, receivedPath: pathname, searchParams };
+}
+
+function jsonResponse(data: unknown, status = 200): Response {
+  return Response.json(data, {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    },
+  });
+}
+
+function errorResponse(message: string, status: number, extra?: Record<string, unknown>): Response {
+  return jsonResponse({ ok: false, error: message, ...extra }, status);
 }
 
 function getJsonBody(request: Request): Promise<Record<string, unknown>> {
   return request.json().catch(() => ({}));
 }
 
-function getUserId(request: Request): string {
-  const url = new URL(request.url);
-  return url.searchParams.get("userId") || "anonymous";
+function filtersFrom(searchParams: URLSearchParams): { category?: string; spicyLevel?: number; priceRange?: string } {
+  const filters: { category?: string; spicyLevel?: number; priceRange?: string } = {};
+  const category = searchParams.get("category");
+  const spicyLevel = searchParams.get("spicyLevel");
+  const priceRange = searchParams.get("priceRange");
+  if (category) filters.category = category;
+  if (spicyLevel) filters.spicyLevel = Number.parseInt(spicyLevel, 10);
+  if (priceRange) filters.priceRange = priceRange;
+  return filters;
 }
 
-function jsonResponse(data: unknown, status = 200): Response {
-  return Response.json(data, {
-    status,
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-  });
+function userIdFrom(searchParams: URLSearchParams): string {
+  return searchParams.get("userId") || "anonymous";
 }
 
-function errorResponse(message: string, status: number): Response {
-  return jsonResponse({ ok: false, error: message }, status);
+async function readPreferences(userId: string): Promise<{ prefs: UserPreferences; source: "powercontext" | "local" }> {
+  const { power } = runtime();
+  if (power) {
+    try {
+      return { prefs: await power.getPreferences(userId), source: "powercontext" };
+    } catch (error) {
+      console.error("PowerContext preferences fallback:", error instanceof Error ? error.message : error);
+    }
+  }
+  return { prefs: await localPower.getPreferences(userId), source: "local" };
+}
+
+async function readHistory(userId: string): Promise<{ items: HistoryItem[]; source: "powercontext" | "local" }> {
+  const { power } = runtime();
+  if (power) {
+    try {
+      return { items: await power.getHistory(userId), source: "powercontext" };
+    } catch (error) {
+      console.error("PowerContext history fallback:", error instanceof Error ? error.message : error);
+    }
+  }
+  return { items: await localPower.getHistory(userId), source: "local" };
+}
+
+async function searchFoods(
+  query: string,
+  filters: { category?: string; spicyLevel?: number; priceRange?: string },
+): Promise<{ data: FoodDocument[]; searchMethod: "semantic" | "keyword"; source: "seekdb" | "local" }> {
+  const { seek } = runtime();
+  if (seek && query) {
+    try {
+      const results = await seek.search(query, filters);
+      return {
+        data: results.map((result: SearchResult) => result.document),
+        searchMethod: "semantic",
+        source: "seekdb",
+      };
+    } catch (error) {
+      console.error("seekdb search fallback:", error instanceof Error ? error.message : error);
+    }
+  }
+  const results = await localSeek.search(query, filters);
+  return {
+    data: results.map((result: SearchResult) => result.document),
+    searchMethod: "keyword",
+    source: "local",
+  };
+}
+
+function enrichHistory(items: HistoryItem[]) {
+  return items.map((item) => ({
+    ...item,
+    food: foods.find((food) => food.id === item.foodId),
+  }));
+}
+
+function shortError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "check failed";
+  return message.slice(0, 180);
 }
 
 export async function handler(request: Request): Promise<Response> {
-  const url = new URL(request.url);
-  const path = url.pathname.replace(/^\/functions\/v1\/app/, "");
-  const method = request.method;
+  const { path, receivedPath, searchParams } = resolveRoute(request);
+  const method = request.method.toUpperCase();
+
+  if (method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }
 
   try {
-    // 健康检查
-    if (path === "" || path === "/") {
-      return jsonResponse({ 
-        ok: true, 
+    if ((path === "/" || path === "") && method === "GET") {
+      const { config } = runtime();
+      return jsonResponse({
+        ok: true,
         message: "今天吃什么 API 服务运行中",
-        mode: USE_REAL_SERVICES ? "production" : "demo",
+        route: "/",
+        receivedPath,
+        mode: config.powerContext || config.seekdb ? "configured" : "demo",
         services: {
-          seekdb: USE_REAL_SERVICES ? SEEKDB_CONFIG.host : "local",
-          powerContext: USE_REAL_SERVICES ? POWERCONTEXT_CONFIG.baseUrl : "local",
+          seekdb: config.seekdb ? "configured" : "unconfigured",
+          powerContext: config.powerContext ? "configured" : "unconfigured",
         },
       });
     }
 
-    // GET /api/foods - 获取所有菜品（支持筛选）
     if (path === "/api/foods" && method === "GET") {
-      const category = url.searchParams.get("category");
-      const spicyLevel = url.searchParams.get("spicyLevel");
-      const priceRange = url.searchParams.get("priceRange");
-
-      const filters: { category?: string; spicyLevel?: number; priceRange?: string } = {};
-      if (category) filters.category = category;
-      if (spicyLevel) filters.spicyLevel = parseInt(spicyLevel);
-      if (priceRange) filters.priceRange = priceRange;
-
-      const results = await seekdb.search("", filters);
-      return jsonResponse({ ok: true, data: results.map((r: SearchResult) => r.document) });
-    }
-
-    // GET /api/foods/search - seekdb 语义搜索
-    if (path === "/api/foods/search" && method === "GET") {
-      const query = url.searchParams.get("q") || "";
-      const category = url.searchParams.get("category");
-      const spicyLevel = url.searchParams.get("spicyLevel");
-      const priceRange = url.searchParams.get("priceRange");
-
-      if (!query) {
-        return errorResponse("Query parameter 'q' is required", 400);
-      }
-
-      const filters: { category?: string; spicyLevel?: number; priceRange?: string } = {};
-      if (category) filters.category = category;
-      if (spicyLevel) filters.spicyLevel = parseInt(spicyLevel);
-      if (priceRange) filters.priceRange = priceRange;
-
-      // 使用 seekdb 进行语义搜索
-      const results = await seekdb.search(query, filters);
-      return jsonResponse({ 
-        ok: true, 
-        data: results.map((r: SearchResult) => r.document),
-        searchMethod: USE_REAL_SERVICES ? "semantic" : "keyword",
+      const results = await localSeek.search("", filtersFrom(searchParams), 100);
+      return jsonResponse({
+        ok: true,
+        data: results.map((result) => result.document),
+        source: "catalog",
       });
     }
 
-    // GET /api/foods/random - 智能推荐（结合 PowerContext 用户偏好）
-    if (path === "/api/foods/random" && method === "GET") {
-      const userId = getUserId(request);
-      
-      // 从 PowerContext 获取用户偏好和历史
-      const prefs = await powerContext.getPreferences(userId);
-      const history = await powerContext.getHistory(userId);
+    if (path === "/api/foods/search" && method === "GET") {
+      const query = searchParams.get("q") || "";
+      if (!query) return errorResponse("Query parameter 'q' is required", 400, { receivedPath });
+      const found = await searchFoods(query, filtersFrom(searchParams));
+      return jsonResponse({ ok: true, ...found });
+    }
 
-      const recentIds = history.slice(0, 5).map((h) => h.foodId);
-      
-      // 筛选可用菜品
-      const available = foods.filter((f) => {
-        // 排除最近吃过的
-        if (recentIds.includes(f.id)) return false;
-        // 排除不喜欢的
-        if (prefs.dislikedFoods.includes(f.id)) return false;
-        // 如果有偏好菜系，优先匹配
-        if (prefs.favoriteCategories.length > 0 && !prefs.favoriteCategories.includes(f.category)) {
-          return false;
-        }
+    if (path === "/api/foods/random" && method === "GET") {
+      const userId = userIdFrom(searchParams);
+      const { prefs, source: prefSource } = await readPreferences(userId);
+      const { items: history, source: historySource } = await readHistory(userId);
+      const recentIds = history.slice(0, 5).map((item) => item.foodId);
+      const available = foods.filter((food) => {
+        if (recentIds.includes(food.id)) return false;
+        if (prefs.dislikedFoods.includes(food.id)) return false;
+        if (prefs.favoriteCategories.length > 0 && !prefs.favoriteCategories.includes(food.category)) return false;
         return true;
       });
-
-      const pool = available.length > 0 ? available : foods;
-      
-      // 如果用户有喜欢的菜品，增加权重
-      const weightedPool: Food[] = [];
-      pool.forEach((f) => {
-        const weight = prefs.favoriteFoods.includes(f.id) ? 3 : 1;
-        for (let i = 0; i < weight; i++) {
-          weightedPool.push(f);
-        }
-      });
-
-      const selected = weightedPool[Math.floor(Math.random() * weightedPool.length)];
-      return jsonResponse({ ok: true, data: selected });
+      const pool = available.length > 0 ? available : foods.filter((food) => !prefs.dislikedFoods.includes(food.id));
+      const usable = pool.length > 0 ? pool : foods;
+      const weighted: Food[] = [];
+      for (const food of usable) {
+        const weight = prefs.favoriteFoods.includes(food.id) ? 3 : 1;
+        for (let i = 0; i < weight; i += 1) weighted.push(food);
+      }
+      const selected = weighted[Math.floor(Math.random() * weighted.length)];
+      const memorySource = prefSource === "powercontext" && historySource === "powercontext" ? "powercontext" : "local";
+      return jsonResponse({ ok: true, data: selected, memorySource });
     }
 
-    // GET /api/categories - 获取所有分类
     if (path === "/api/categories" && method === "GET") {
       return jsonResponse({ ok: true, data: categories });
     }
 
-    // GET /api/user/preferences - 获取用户偏好（PowerContext）
     if (path === "/api/user/preferences" && method === "GET") {
-      const userId = getUserId(request);
-      const prefs = await powerContext.getPreferences(userId);
-      return jsonResponse({ ok: true, data: prefs });
+      const userId = userIdFrom(searchParams);
+      const result = await readPreferences(userId);
+      return jsonResponse({ ok: true, data: result.prefs, memorySource: result.source });
     }
 
-    // POST /api/user/preferences - 更新用户偏好（PowerContext）
     if (path === "/api/user/preferences" && method === "POST") {
-      const userId = getUserId(request);
+      const userId = userIdFrom(searchParams);
       const body = await getJsonBody(request);
-      const current = await powerContext.getPreferences(userId);
-      const updated = { ...current, ...body };
-      await powerContext.setPreferences(userId, updated);
-      return jsonResponse({ ok: true, data: updated });
+      const { power } = runtime();
+      const current = await readPreferences(userId);
+      const updated: UserPreferences = {
+        favoriteCategories: Array.isArray(body.favoriteCategories) ? body.favoriteCategories as string[] : current.prefs.favoriteCategories,
+        spicyLevel: typeof body.spicyLevel === "number" ? body.spicyLevel : current.prefs.spicyLevel,
+        priceRange: typeof body.priceRange === "string" ? body.priceRange : current.prefs.priceRange,
+        dislikedFoods: Array.isArray(body.dislikedFoods) ? body.dislikedFoods as string[] : current.prefs.dislikedFoods,
+        favoriteFoods: Array.isArray(body.favoriteFoods) ? body.favoriteFoods as string[] : current.prefs.favoriteFoods,
+      };
+      if (power) {
+        try {
+          await power.setPreferences(userId, updated);
+          return jsonResponse({ ok: true, data: updated, memorySource: "powercontext" });
+        } catch (error) {
+          console.error("PowerContext setPreferences fallback:", error instanceof Error ? error.message : error);
+        }
+      }
+      await localPower.setPreferences(userId, updated);
+      return jsonResponse({ ok: true, data: updated, memorySource: "local" });
     }
 
-    // GET /api/user/history - 获取用餐历史（PowerContext）
     if (path === "/api/user/history" && method === "GET") {
-      const userId = getUserId(request);
-      const history = await powerContext.getHistory(userId);
-      const enriched = history.map((item) => ({
-        ...item,
-        food: foods.find((f) => f.id === item.foodId),
-      }));
-      return jsonResponse({ ok: true, data: enriched });
+      const userId = userIdFrom(searchParams);
+      const result = await readHistory(userId);
+      return jsonResponse({ ok: true, data: enrichHistory(result.items), memorySource: result.source });
     }
 
-    // POST /api/user/history - 添加用餐记录（PowerContext）
     if (path === "/api/user/history" && method === "POST") {
-      const userId = getUserId(request);
+      const userId = userIdFrom(searchParams);
       const body = await getJsonBody(request);
-      const { foodId, liked } = body as { foodId: string; liked: boolean | null };
-
-      if (!foodId) {
-        return errorResponse("foodId is required", 400);
+      const foodId = typeof body.foodId === "string" ? body.foodId : "";
+      if (!foodId) return errorResponse("foodId is required", 400, { receivedPath });
+      const liked = body.liked === true || body.liked === false ? body.liked : null;
+      const item: HistoryItem = { foodId, timestamp: Date.now(), liked };
+      const { power } = runtime();
+      if (power) {
+        try {
+          await power.addHistory(userId, item);
+          return jsonResponse({ ok: true, message: "History updated", memorySource: "powercontext" });
+        } catch (error) {
+          console.error("PowerContext addHistory fallback:", error instanceof Error ? error.message : error);
+        }
       }
-
-      await powerContext.addHistory(userId, {
-        foodId,
-        timestamp: Date.now(),
-        liked: liked ?? null,
-      });
-
-      return jsonResponse({ ok: true, message: "History updated" });
+      await localPower.addHistory(userId, item);
+      return jsonResponse({ ok: true, message: "History updated", memorySource: "local" });
     }
 
-    // POST /api/feedback - 记录反馈（PowerContext）
+    if (path === "/api/user/history/clear" && method === "POST") {
+      const userId = userIdFrom(searchParams);
+      const { power } = runtime();
+      if (power) {
+        try {
+          await power.clearHistory(userId);
+          return jsonResponse({ ok: true, memorySource: "powercontext" });
+        } catch (error) {
+          console.error("PowerContext clearHistory fallback:", error instanceof Error ? error.message : error);
+        }
+      }
+      await localPower.clearHistory(userId);
+      return jsonResponse({ ok: true, memorySource: "local" });
+    }
+
     if (path === "/api/feedback" && method === "POST") {
-      const userId = getUserId(request);
+      const userId = userIdFrom(searchParams);
       const body = await getJsonBody(request);
-      const { foodId, liked } = body as { foodId: string; liked: boolean };
-
-      if (!foodId || liked === undefined) {
-        return errorResponse("foodId and liked are required", 400);
+      const foodId = typeof body.foodId === "string" ? body.foodId : "";
+      if (!foodId || typeof body.liked !== "boolean") {
+        return errorResponse("foodId and liked are required", 400, { receivedPath });
       }
-
-      await powerContext.updateFeedback(userId, foodId, liked);
-      return jsonResponse({ ok: true, message: "Feedback recorded" });
+      const { power } = runtime();
+      if (power) {
+        try {
+          await power.updateFeedback(userId, foodId, body.liked);
+          return jsonResponse({ ok: true, message: "Feedback recorded", memorySource: "powercontext" });
+        } catch (error) {
+          console.error("PowerContext feedback fallback:", error instanceof Error ? error.message : error);
+        }
+      }
+      await localPower.updateFeedback(userId, foodId, body.liked);
+      return jsonResponse({ ok: true, message: "Feedback recorded", memorySource: "local" });
     }
 
-    // GET /api/services/status - 检查服务状态
     if (path === "/api/services/status" && method === "GET") {
-      let seekdbStatus = "unknown";
-      let powerContextStatus = "unknown";
-
-      if (USE_REAL_SERVICES) {
+      const { config, power, seek } = runtime();
+      let seekStatus: "connected" | "disconnected" | "unconfigured" = config.seekdb ? "disconnected" : "unconfigured";
+      let seekDetail: string | undefined;
+      if (seek) {
         try {
-          await seekdb.getAllFoods();
-          seekdbStatus = "connected";
-        } catch {
-          seekdbStatus = "disconnected";
+          await seek.ping();
+          seekStatus = "connected";
+        } catch (error) {
+          seekStatus = "disconnected";
+          seekDetail = shortError(error);
         }
+      }
 
+      let powerStatus: "connected" | "disconnected" | "unconfigured" = config.powerContext ? "disconnected" : "unconfigured";
+      let powerDetail: string | undefined;
+      let searchMode: string | undefined;
+      let hitCount: number | undefined;
+      if (power) {
         try {
-          await powerContext.getPreferences("test");
-          powerContextStatus = "connected";
-        } catch {
-          powerContextStatus = "disconnected";
+          const ping = await power.ping();
+          powerStatus = "connected";
+          searchMode = ping.mode;
+          hitCount = ping.hitCount;
+        } catch (error) {
+          powerStatus = "disconnected";
+          powerDetail = shortError(error);
         }
-      } else {
-        seekdbStatus = "demo";
-        powerContextStatus = "demo";
       }
 
       return jsonResponse({
         ok: true,
-        mode: USE_REAL_SERVICES ? "production" : "demo",
+        route: "/api/services/status",
+        receivedPath,
+        mode: config.powerContext || config.seekdb ? "configured" : "demo",
         services: {
           seekdb: {
-            status: seekdbStatus,
-            config: USE_REAL_SERVICES ? { host: SEEKDB_CONFIG.host, port: SEEKDB_CONFIG.port } : null,
+            status: seekStatus,
+            configured: Boolean(config.seekdb),
+            host: config.seekdb?.host ?? null,
+            port: config.seekdb?.port ?? null,
+            detail: seekDetail ?? null,
           },
           powerContext: {
-            status: powerContextStatus,
-            config: USE_REAL_SERVICES ? { baseUrl: POWERCONTEXT_CONFIG.baseUrl } : null,
+            status: powerStatus,
+            configured: Boolean(config.powerContext),
+            scopeId: config.powerContext?.scopeId ?? null,
+            searchMode: searchMode ?? null,
+            hitCount: hitCount ?? null,
+            detail: powerDetail ?? null,
           },
         },
       });
     }
 
-    return errorResponse("Not found", 404);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
+    if (isKnownRoute(path) && method !== "GET" && method !== "POST") {
+      return errorResponse("Method not allowed", 405, { path, receivedPath });
+    }
+
+    return errorResponse("Not found", 404, { path, receivedPath });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Handler error:", message);
-    return errorResponse("Internal server error", 500);
+    return errorResponse("Internal server error", 500, { receivedPath });
   }
 }

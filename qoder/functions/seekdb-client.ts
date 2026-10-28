@@ -114,11 +114,16 @@ export class SeekDBClient {
         nResults: limit,
         where: Object.keys(where).length > 0 ? where : undefined,
       }),
+      signal: AbortSignal.timeout(4000),
     });
 
+    if (!response.ok) {
+      throw new Error(`seekdb HTTP ${response.status}`);
+    }
     const data = await response.json();
-    
-    if (!data.results) return [];
+    if (!data || !Array.isArray(data.results)) {
+      throw new Error("seekdb response missing results");
+    }
 
     return data.results.map((result: {
       id: string;
@@ -166,10 +171,36 @@ export class SeekDBClient {
   async getAllFoods(): Promise<FoodDocument[]> {
     await this.initialize();
 
-    const response = await fetch(`${this.baseUrl}/collections/${this.collectionName}/get`);
+    const response = await fetch(`${this.baseUrl}/collections/${this.collectionName}/get`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!response.ok) {
+      throw new Error(`seekdb HTTP ${response.status}`);
+    }
     const data = await response.json();
-    
-    return data.documents?.map((doc: { metadata: FoodDocument }) => doc.metadata) || [];
+    if (!data || !Array.isArray(data.documents)) {
+      throw new Error("seekdb response missing documents");
+    }
+
+    return data.documents.map((doc: { metadata: FoodDocument }) => doc.metadata);
+  }
+
+  // Live check used by /api/services/status. Throws unless the HTTP API responds.
+  async ping(): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/collections/${this.collectionName}`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!response.ok) {
+      throw new Error(`seekdb HTTP ${response.status}`);
+    }
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("json")) {
+      throw new Error("seekdb response is not JSON");
+    }
+    const data = await response.json();
+    if (!data || typeof data !== "object") {
+      throw new Error("seekdb empty response");
+    }
   }
 }
 

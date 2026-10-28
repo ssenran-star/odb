@@ -1,72 +1,136 @@
-# 运行步骤（占位）
+# 运行说明
 
-应用代码在 Qoder IDE 中实现。下面是本地准备环境和启动时要遵守的步骤。命令在 `qoder/` 目录下执行。
+作品是「今天吃什么」。命令都在仓库的 `qoder/` 目录执行。配置示例只有占位值，不要把真实 token、密码写进文件或提交记录。
 
-## 1. 虚拟环境
+本说明在 Node v22.23.4、Deno 2.9.8 上跑通。Node 需要 22.13 及以上的 22.x，或 24 及以上。Deno 使用 2.x。
 
-需要 Python 3.11 或更高版本。
+## 1. 安装
 
 ```bash
 cd qoder
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -U pyseekdb
+node -v
+deno --version
+npm ci
 ```
 
-`.venv/` 和 seekdb 数据目录留在本地，不提交。
+没有 Deno 时，可用 https://docs.deno.com/runtime/getting_started/installation/ 安装，再把 `deno` 放到 `PATH`。
 
-## 2. 环境变量
+## 2. 只跑演示
 
-下面都是占位值。远程密码只放在本机环境里，不写进文件、不写进命令历史里的真实口令。
+演示模式不连接 PowerContext 或 seekdb。偏好只留在这次函数进程里，刷新页面后的历史以浏览器 `localStorage` 为准。页脚应显示「演示模式：未配置 PowerContext / seekdb」，不能显示已连接。
 
-嵌入式模式（默认）：
+终端 A：
 
 ```bash
-export SEEKDB_PATH="./data/seekdb"
-export SEEKDB_DATABASE="contest_notes"
-export SEEKDB_COLLECTION="prep_notes"
-export NOTES_DIR="./data/samples"
+npm run dev
 ```
 
-可选的远程 seekdb / OceanBase。留空 `SEEKDB_HOST` 时走嵌入式模式。
+终端 B：
+
+```bash
+npm run dev:function
+```
+
+打开 http://127.0.0.1:5173 。
+
+函数直接监听 http://127.0.0.1:8000 ，这些地址都应返回 JSON，而不是 404：
+
+```bash
+curl -sS http://127.0.0.1:8000/functions/v1/app
+curl -sS http://127.0.0.1:8000/functions/v1/app/api/foods
+curl -sS http://127.0.0.1:8000/app/api/services/status
+curl -sS --get --data-urlencode "q=辣" http://127.0.0.1:8000/api/foods/search
+```
+
+自检路由和打印上述命令：
+
+```bash
+npm run verify:probes
+npm run test:function
+```
+
+`USE_REAL_SERVICES=false` 会强制演示，即使下面的地址已经填写。
+
+## 3. 接入 PowerContext
+
+这是验收用的指定技术：用户偏好、用餐历史和喜欢/不喜欢都经过 PowerContext 记忆，不是只做连通性探测。
+
+`trycloudflare.com` 地址会轮换。下面的主机名在 2026-10-28 可用；打不开时换成自己的隧道或本机 `http://127.0.0.1:8000`，不要把过期地址当成故障以外的结论。
+
+```bash
+export POWERCONTEXT_URL="https://cal-ent-altered-higher.trycloudflare.com"
+export POWERCONTEXT_SCOPE_ID="scp_15fskprdpsyc6887xq7v0mt3n5"
+export POWERCONTEXT_API_TOKEN=""
+```
+
+`POWERCONTEXT_API_TOKEN` 留空表示服务端没开鉴权。服务端要求 Bearer 时再填，只放在环境里。
+
+已有 scope 可以直接用。新建 scope 时必须带 `idempotency_key`（占位，不要用真实密钥当 key 的替代品）：
+
+```bash
+curl -sS -X POST "$POWERCONTEXT_URL/v1/scopes" \
+  -H 'content-type: application/json' \
+  -d '{"title":"今天吃什么","summary":"食物偏好与用餐历史","idempotency_key":"what-to-eat-scope"}'
+```
+
+从返回 JSON 里取出 `scope_id`，设到 `POWERCONTEXT_SCOPE_ID`。
+
+停掉原来的 `npm run dev:function`，在同一个已导出变量的终端重新启动。然后：
+
+```bash
+curl -sS http://127.0.0.1:8000/functions/v1/app/api/services/status
+```
+
+`services.powerContext.status` 为 `connected` 才表示 `POST /v1/memory/search` 成功。只打开页面、或只访问 `/health/live`，不算接上。
+
+可选：把同一次读写打出来。
+
+```bash
+npm run verify:probes -- --write --out evidence/powercontext-remember-search.json
+```
+
+没有这两个环境变量时，脚本只做路由自检，不会假装连上了服务。
+
+## 4. seekdb（可选，当前不是验收主路径）
+
+Deno 函数不会走 pyseekdb 的 MySQL 协议。只有 `SEEKDB_HOST` 指向一个能响应 HTTP JSON 的 seekdb 网关时，状态才会变成 `connected`，搜索的 `searchMethod` 才会是 `semantic`。连不上就保持关键词搜索，并在状态里标 `disconnected`。
 
 ```bash
 export SEEKDB_HOST=""
 export SEEKDB_PORT="2881"
-export SEEKDB_TENANT="sys"
 export SEEKDB_USER="root"
 export SEEKDB_PASSWORD=""
+export SEEKDB_DATABASE="food_app"
 ```
 
-`SEEKDB_PASSWORD` 为空时，pyseekdb 会在远程模式下尝试读取同名环境变量。本地练习使用嵌入式模式即可，不必填写密码。
+`SEEKDB_HOST` 留空表示不启用。密码只放在环境变量 `SEEKDB_PASSWORD`。
 
-## 3. 数据路径
+## 5. 发布到 Qoder Sites
 
-练习笔记在 `data/samples/`：
+用个人账号。企业版账号不能把站点设成公开。
 
-- `01-hybrid-search.md`
-- `02-pyseekdb-embedded.md`
-- `03-contest-prep-rhythm.md`
+1. 拉取分支 `qoder` 的最新提交。
+2. 用 Qoder Desktop 打开该项目，进入 Sites。
+3. 可见范围选「任何人都可访问」。
+4. 在 Sites 的环境变量 / Secrets 里写入与本地相同的名字。值只写在 Qoder 里，不写进 git：
+   - `POWERCONTEXT_URL`
+   - `POWERCONTEXT_SCOPE_ID`
+   - `POWERCONTEXT_API_TOKEN`（没有鉴权就不要建这个变量）
+   - 可选：`SEEKDB_HOST`、`SEEKDB_PORT`、`SEEKDB_USER`、`SEEKDB_PASSWORD`、`SEEKDB_DATABASE`
+   - 不要把 `USE_REAL_SERVICES` 设成 `false`，否则会强制演示。
+5. 再次点击「发布」。只改代码或只改变量而不发布，线上仍是旧包。
+6. 用无痕窗口打开公开 URL，确认未登录能打开首页。
 
-嵌入式数据目录是 `data/seekdb/`（与 `SEEKDB_PATH` 一致）。首次导入时由应用创建。
-
-## 4. 启动
-
-Qoder 实现出入口之后，在已激活的虚拟环境里启动。入口名以最终代码为准，占位命令：
+发布后核对函数（把主机换成自己的 Sites 域名）：
 
 ```bash
-python -m app
+curl -sS https://jin-tian-chi-shen-me-2026-sju7xlq7hm5.qoder.zone/functions/v1/app
+curl -sS https://jin-tian-chi-shen-me-2026-sju7xlq7hm5.qoder.zone/functions/v1/app/api/foods
+curl -sS https://jin-tian-chi-shen-me-2026-sju7xlq7hm5.qoder.zone/functions/v1/app/api/services/status
 ```
 
-启动后应看到：
+健康检查应返回 `"ok": true`。状态接口在 Secrets 生效后，`powerContext.status` 应为 `connected`。若仍是 `{"ok":false,"error":"Not found"}`，说明这次提交还没发布上去。2026-10-28 推送前的线上结果记在 `evidence/sites-api-probe.txt`，当时就是这个 404。
 
-1. 使用的 seekdb 模式（嵌入式路径，或远程 host）。
-2. 数据库名 `contest_notes` 与集合名 `prep_notes`。
-3. 从 `NOTES_DIR` 导入的块数量。
+## 6. 和验证样例的关系
 
-然后打开页面或 CLI，按 `VERIFY.md` 搜一次「备赛口令」。
-
-## 5. 发布
-
-本地跑通后，在 Qoder 里用 Sites 发布当前站点，访问范围选「任何人都可访问」。把公开 URL 记入 `VERIFY.md`。预览地址和已发布地址不同，以发布后的公开链接为准。
+本地演示走 [VERIFY.md](VERIFY.md) 样例 A。接上 PowerContext 后走样例 B。样例 B 的原始响应在 `evidence/powercontext-remember-search.json`。

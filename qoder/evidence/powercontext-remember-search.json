@@ -1,0 +1,393 @@
+{
+  "captured_at": "2026-10-28T04:39:24.683182+00:00",
+  "note": "Live probe from the food-app handler with POWERCONTEXT_URL and POWERCONTEXT_SCOPE_ID set. remember/search responses are copied from the server, not invented. trycloudflare hostnames rotate.",
+  "powercontext_public_tunnel": "https://cal-ent-altered-higher.trycloudflare.com",
+  "tunnel_note": "trycloudflare URLs rotate. Replace POWERCONTEXT_URL when the hostname changes. Do not commit API tokens.",
+  "scope_id": "scp_15fskprdpsyc6887xq7v0mt3n5",
+  "user_id": "qoder-verify-20261028",
+  "app_roundtrip": {
+    "status": {
+      "ok": true,
+      "route": "/api/services/status",
+      "receivedPath": "/functions/v1/app/api/services/status",
+      "mode": "configured",
+      "services": {
+        "seekdb": {
+          "status": "unconfigured",
+          "configured": false,
+          "host": null,
+          "port": null,
+          "detail": null
+        },
+        "powerContext": {
+          "status": "connected",
+          "configured": true,
+          "scopeId": "scp_15fskprdpsyc6887xq7v0mt3n5",
+          "searchMode": "text",
+          "hitCount": 2,
+          "detail": null
+        }
+      }
+    },
+    "write_preferences": {
+      "ok": true,
+      "data": {
+        "favoriteCategories": [
+          "chinese",
+          "hotpot"
+        ],
+        "spicyLevel": 3,
+        "priceRange": "medium",
+        "dislikedFoods": [
+          "3"
+        ],
+        "favoriteFoods": [
+          "2",
+          "9"
+        ]
+      },
+      "memorySource": "powercontext"
+    },
+    "read_preferences": {
+      "ok": true,
+      "data": {
+        "favoriteCategories": [
+          "chinese",
+          "hotpot"
+        ],
+        "spicyLevel": 3,
+        "priceRange": "medium",
+        "dislikedFoods": [
+          "3"
+        ],
+        "favoriteFoods": [
+          "2",
+          "9"
+        ]
+      },
+      "memorySource": "powercontext"
+    },
+    "write_history": {
+      "ok": true,
+      "message": "History updated",
+      "memorySource": "powercontext"
+    },
+    "read_history": {
+      "ok": true,
+      "data": [
+        {
+          "foodId": "2",
+          "timestamp": 1793162314166,
+          "liked": true,
+          "food": {
+            "id": "2",
+            "name": "麻辣火锅",
+            "category": "hotpot",
+            "tags": [
+              "麻辣",
+              "涮菜",
+              "聚餐"
+            ],
+            "description": "地道川味，鲜香麻辣",
+            "emoji": "🍲",
+            "priceRange": "high",
+            "spicy": 3,
+            "healthScore": 4
+          }
+        }
+      ],
+      "memorySource": "powercontext"
+    },
+    "direct_search": {
+      "mode": "text",
+      "hits": [
+        {
+          "memory": {
+            "artifact": {
+              "family": "atomic-memory",
+              "artifact_id": "art_d94e56647e614a5e97a075dd684f91e4",
+              "revision": 1
+            },
+            "kind": "user_preferences",
+            "text": "用户 qoder-verify-20261028 偏好：喜欢的菜系 chinese、hotpot；辣度偏好 3；价位 medium；喜欢的菜 麻辣火锅、酸菜鱼；不喜欢 寿司拼盘。\nPCJSON:{\"v\":1,\"kind\":\"user_preferences\",\"userId\":\"qoder-verify-20261028\",\"updatedAt\":1793162312917,\"favoriteCategories\":[\"chinese\",\"hotpot\"],\"spicyLevel\":3,\"priceRange\":\"medium\",\"dislikedFoods\":[\"3\"],\"favoriteFoods\":[\"2\",\"9\"]}",
+            "state": "active",
+            "state_version": 0,
+            "merged_into_id": null
+          },
+          "score": 0.01639344262295082,
+          "matched_by": [
+            "text"
+          ]
+        },
+        {
+          "memory": {
+            "artifact": {
+              "family": "atomic-memory",
+              "artifact_id": "art_dc14ca6706564d1d8e572b280dcdbc55",
+              "revision": 1
+            },
+            "kind": "eating_history",
+            "text": "用户 qoder-verify-20261028 最近吃过：麻辣火锅 2（喜欢）。时间戳用于避免重复推荐。\nPCJSON:{\"v\":1,\"kind\":\"eating_history\",\"userId\":\"qoder-verify-20261028\",\"updatedAt\":1793162314620,\"items\":[{\"foodId\":\"2\",\"timestamp\":1793162314166,\"liked\":true}]}",
+            "state": "active",
+            "state_version": 0,
+            "merged_into_id": null
+          },
+          "score": 0.016129032258064516,
+          "matched_by": [
+            "text"
+          ]
+        },
+        {
+          "memory": {
+            "artifact": {
+              "family": "atomic-memory",
+              "artifact_id": "art_4966f10befe6448482a2a008ac06c6a3",
+              "revision": 1
+            },
+            "kind": "user_preferences",
+            "text": "用户 anonymous 偏好：喜欢川菜与麻辣香锅；辣度偏好 3；价位 medium；喜欢的菜 food_mapodoufu；不喜欢 food_qingzhengyu。",
+            "state": "active",
+            "state_version": 0,
+            "merged_into_id": null
+          },
+          "score": 0.015873015873015872,
+          "matched_by": [
+            "text"
+          ]
+        }
+      ]
+    }
+  },
+  "demo_mode_without_env": {
+    "health": {
+      "ok": true,
+      "message": "今天吃什么 API 服务运行中",
+      "route": "/",
+      "receivedPath": "/functions/v1/app",
+      "mode": "demo",
+      "services": {
+        "seekdb": "unconfigured",
+        "powerContext": "unconfigured"
+      }
+    },
+    "search_la": {
+      "ok": true,
+      "data": [
+        {
+          "id": "2",
+          "name": "麻辣火锅",
+          "category": "hotpot",
+          "tags": [
+            "麻辣",
+            "涮菜",
+            "聚餐"
+          ],
+          "description": "地道川味，鲜香麻辣",
+          "emoji": "🍲",
+          "priceRange": "high",
+          "spicy": 3,
+          "healthScore": 4
+        },
+        {
+          "id": "12",
+          "name": "麻辣烫",
+          "category": "hotpot",
+          "tags": [
+            "自选",
+            "麻辣",
+            "快餐"
+          ],
+          "description": "自由搭配，麻辣鲜香",
+          "emoji": "🥘",
+          "priceRange": "low",
+          "spicy": 2,
+          "healthScore": 5
+        },
+        {
+          "id": "17",
+          "name": "螺蛳粉",
+          "category": "noodle",
+          "tags": [
+            "米粉",
+            "酸辣",
+            "广西"
+          ],
+          "description": "酸辣鲜香，独特风味",
+          "emoji": "🍜",
+          "priceRange": "low",
+          "spicy": 3,
+          "healthScore": 5
+        },
+        {
+          "id": "4",
+          "name": "宫保鸡丁",
+          "category": "chinese",
+          "tags": [
+            "鸡肉",
+            "花生",
+            "微辣"
+          ],
+          "description": "经典川菜，下饭神器",
+          "emoji": "🍗",
+          "priceRange": "medium",
+          "spicy": 2,
+          "healthScore": 6
+        },
+        {
+          "id": "9",
+          "name": "酸菜鱼",
+          "category": "chinese",
+          "tags": [
+            "鱼肉",
+            "酸菜",
+            "麻辣"
+          ],
+          "description": "鲜嫩鱼片，酸爽开胃",
+          "emoji": "🐟",
+          "priceRange": "medium",
+          "spicy": 2,
+          "healthScore": 7
+        }
+      ],
+      "searchMethod": "keyword",
+      "source": "local"
+    },
+    "status": {
+      "ok": true,
+      "route": "/api/services/status",
+      "receivedPath": "/app/api/services/status",
+      "mode": "demo",
+      "services": {
+        "seekdb": {
+          "status": "unconfigured",
+          "configured": false,
+          "host": null,
+          "port": null,
+          "detail": null
+        },
+        "powerContext": {
+          "status": "unconfigured",
+          "configured": false,
+          "scopeId": null,
+          "searchMode": null,
+          "hitCount": null,
+          "detail": null
+        }
+      }
+    },
+    "preferences_write": {
+      "ok": true,
+      "data": {
+        "favoriteCategories": [
+          "noodle"
+        ],
+        "spicyLevel": 1,
+        "priceRange": "low",
+        "dislikedFoods": [
+          "2"
+        ],
+        "favoriteFoods": [
+          "1"
+        ]
+      },
+      "memorySource": "local"
+    }
+  },
+  "prior_capture": {
+    "captured_at": "2026-10-28T12:20:11.191538",
+    "timezone": "Asia/Shanghai",
+    "powercontext_public_tunnel": "https://cal-ent-altered-higher.trycloudflare.com",
+    "tunnel_reachable": true,
+    "scope_id": "scp_15fskprdpsyc6887xq7v0mt3n5",
+    "search_query": "喜欢吃什么辣的",
+    "search_result": {
+      "mode": "text",
+      "hits": [
+        {
+          "memory": {
+            "artifact": {
+              "family": "atomic-memory",
+              "artifact_id": "art_19524f611fba456da0d3a0fa84d5dfde",
+              "revision": 1
+            },
+            "kind": "eating_history",
+            "text": "用户 anonymous 最近吃过：food_mapodoufu（喜欢）、food_shuizhuoyu（喜欢）；时间戳用于避免重复推荐。",
+            "state": "active",
+            "state_version": 0,
+            "merged_into_id": null
+          },
+          "score": 0.01639344262295082,
+          "matched_by": [
+            "text"
+          ]
+        },
+        {
+          "memory": {
+            "artifact": {
+              "family": "atomic-memory",
+              "artifact_id": "art_4966f10befe6448482a2a008ac06c6a3",
+              "revision": 1
+            },
+            "kind": "user_preferences",
+            "text": "用户 anonymous 偏好：喜欢川菜与麻辣香锅；辣度偏好 3；价位 medium；喜欢的菜 food_mapodoufu；不喜欢 food_qingzhengyu。",
+            "state": "active",
+            "state_version": 0,
+            "merged_into_id": null
+          },
+          "score": 0.016129032258064516,
+          "matched_by": [
+            "text"
+          ]
+        }
+      ]
+    },
+    "entries_list": {
+      "entries": [
+        {
+          "artifact": {
+            "family": "atomic-memory",
+            "artifact_id": "art_19524f611fba456da0d3a0fa84d5dfde",
+            "revision": 1
+          },
+          "kind": "eating_history",
+          "text": "用户 anonymous 最近吃过：food_mapodoufu（喜欢）、food_shuizhuoyu（喜欢）；时间戳用于避免重复推荐。",
+          "state": "active",
+          "state_version": 0,
+          "merged_into_id": null
+        },
+        {
+          "artifact": {
+            "family": "atomic-memory",
+            "artifact_id": "art_4966f10befe6448482a2a008ac06c6a3",
+            "revision": 1
+          },
+          "kind": "user_preferences",
+          "text": "用户 anonymous 偏好：喜欢川菜与麻辣香锅；辣度偏好 3；价位 medium；喜欢的菜 food_mapodoufu；不喜欢 food_qingzhengyu。",
+          "state": "active",
+          "state_version": 0,
+          "merged_into_id": null
+        }
+      ],
+      "next_cursor": null
+    },
+    "scopes_titles": [
+      {
+        "scope_id": "scp_15fskprdpsyc6887xq7v0mt3n5",
+        "title": "今天吃什么-Qoder"
+      },
+      {
+        "scope_id": "scp_35p9y0y76ct585xm9q064w44a9",
+        "title": "锈锚酒馆-契约样例"
+      },
+      {
+        "scope_id": "scp_7nspjp9sre2ama92739j3n6d7k",
+        "title": "Default"
+      },
+      {
+        "scope_id": "scp_7zyz8e9e845x8m4mga4xwt7zd8",
+        "title": "锈锚酒馆 VERIFY"
+      }
+    ],
+    "note": "Memories were written earlier via local PowerContext /v1/memory/remember (kinds user_preferences + eating_history). This capture re-reads them through the public tunnel."
+  }
+}

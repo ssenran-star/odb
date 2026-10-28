@@ -1,0 +1,18 @@
+# Live Sites API probe before republish
+# Captured 2026-10-28T04:39:26Z
+# The HTML homepage returns 200. These function routes still return the handler 404 until Qoder Desktop publishes this commit.
+
+## GET /functions/v1/app
+HTTP/2 404 
+content-type: application/json
+body: {"ok":false,"error":"Not found"}
+
+## GET /functions/v1/app/api/foods
+HTTP/2 404 
+content-type: application/json
+body: {"ok":false,"error":"Not found"}
+
+## GET /functions/v1/app/api/services/status
+HTTP/2 404 
+content-type: application/json
+body: {"ok":false,"error":"Not found"}
