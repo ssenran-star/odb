@@ -1,0 +1,32 @@
+{
+  "name": "stepfun-edge-kb",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Browser-quantized embeddings plus seekdb hybrid retrieval for the OceanBase StepFun track.",
+  "scripts": {
+    "dev": "concurrently -n seekdb,web -c cyan,magenta \"npm run seekdb\" \"npm run dev:web\"",
+    "dev:web": "vite --host 127.0.0.1",
+    "seekdb": "tsx scripts/run-seekdb.ts",
+    "start:seekdb": "tsx scripts/run-seekdb.ts",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "smoke": "tsx scripts/run-seekdb.ts scripts/smoke-seekdb.ts",
+    "measure": "tsx scripts/measure-quant.ts"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.7.6",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "seekdb": "^1.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.17.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3"
+  }
+}

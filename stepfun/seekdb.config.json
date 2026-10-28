@@ -1,0 +1,14 @@
+{
+  "mode": "embedded",
+  "path": "./data/seekdb",
+  "database": "kb",
+  "collection": "kb_chunks",
+  "host": "127.0.0.1",
+  "port": 8787,
+  "dimension": 384,
+  "distance": "cosine",
+  "fulltext": {
+    "analyzer": "ngram",
+    "ngram_token_size": 2
+  }
+}
