@@ -1,0 +1,23 @@
+{
+  "id": "07308850afafa60e022fa5ee5d6c8950",
+  "model": "MiniMax-M2.5",
+  "finish_reason": "stop",
+  "usage": {
+    "total_tokens": 2308,
+    "total_characters": 0,
+    "prompt_tokens": 1986,
+    "completion_tokens": 322,
+    "completion_tokens_details": {
+      "reasoning_tokens": 41
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 128
+    }
+  },
+  "base_resp": {
+    "status_code": 0,
+    "status_msg": ""
+  },
+  "assistant_sha256": "de1c5e9b80fab67451a574088de4a5da50eec3e7bfe13221809fcd4618251db9",
+  "assistant_text": "<think>We need return only code block complete file. Need use constant 3.0 likely define HOLIDAY_MULTIPLIER=3.0. Preserve validation. Could update docstring. No explanation outside.</think>\n\n```python\n\"\"\"班次工资。\n\n正班、工作日加班、周末加班和节日加班均按 docs/spec.md 实现。\n\"\"\"\n\nfrom __future__ import annotations\n\n\nHOLIDAY_MULTIPLIER = 3.0\n\n\ndef regular_pay(hourly_rate: float, regular_hours: float) -> float:\n    _validate(hourly_rate, regular_hours)\n    return round(hourly_rate * regular_hours, 2)\n\n\ndef overtime_pay(hourly_rate: float, overtime_hours: float, day_type: str) -> float:\n    _validate(hourly_rate, overtime_hours)\n    if day_type == \"weekday\":\n        return round(hourly_rate * 1.5 * overtime_hours, 2)\n    if day_type == \"weekend\":\n        return round(hourly_rate * 2.0 * overtime_hours, 2)\n    if day_type == \"holiday\":\n        return round(hourly_rate * HOLIDAY_MULTIPLIER * overtime_hours, 2)\n    raise ValueError(f\"unknown day_type: {day_type}\")\n\n\ndef _validate(hourly_rate: float, hours: float) -> None:\n    if hourly_rate < 0 or hours < 0:\n        raise ValueError(\"rates and hours must be non-negative\")\n```"
+}

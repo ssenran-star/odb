@@ -1,0 +1,26 @@
+--- a/sample/src/shiftpay.py
++++ b/sample/src/shiftpay.py
+@@ -1,10 +1,12 @@
+ """班次工资。
+ 
+-正班、工作日加班和周末加班已按 docs/spec.md 实现。
+-day_type 为 holiday 时的倍数尚未实现，当前固定返回 0。
++正班、工作日加班、周末加班和节日加班均按 docs/spec.md 实现。
+ """
+ 
+ from __future__ import annotations
++
++
++HOLIDAY_MULTIPLIER = 3.0
+ 
+ 
+ def regular_pay(hourly_rate: float, regular_hours: float) -> float:
+@@ -19,7 +21,7 @@
+     if day_type == "weekend":
+         return round(hourly_rate * 2.0 * overtime_hours, 2)
+     if day_type == "holiday":
+-        return 0.0
++        return round(hourly_rate * HOLIDAY_MULTIPLIER * overtime_hours, 2)
+     raise ValueError(f"unknown day_type: {day_type}")
+ 
+ 

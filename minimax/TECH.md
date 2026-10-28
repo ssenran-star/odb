@@ -12,7 +12,7 @@
 | `sddctx/power.py` | PowerContext HTTP：scope、`/v1/memory/remember`、`/v1/memory/search`、`/v1/context/prepare` |
 | `sddctx/minimax_api.py` | `POST /chat/completions` |
 | `scripts/run_minimax_edit.py` | 真实修改入口；`--dry-run` 只落盘请求 |
-| `sample/` | 班次工资样例：规格、未完成实现、功能测试与回归测试 |
+| `sample/` | 班次工资样例。当前 `shiftpay.py` 是 MiniMax 改后的版本；改前快照在 `evidence/snapshots/` |
 
 `verify` 用新的 Python 进程调用 `resume` 和 `select`，用来证明重启后的模块会重新读 PowerContext。
 
@@ -23,5 +23,5 @@
 ## 三项技术各自做什么
 
 - **seekdb**：保存工程材料并回答「这次该看哪些规格、文件和测试」。查询日志在 `evidence/seekdb_queries.jsonl`。
-- **MiniMax**：只在 `scripts/run_minimax_edit.py` 不带 `--dry-run` 且设置了 `MINIMAX_API_KEY` 时改 `src/shiftpay.py`。没调用就只保留 `evidence/TODO_MINIMAX.md`，不编造回复。
+- **MiniMax**：`scripts/run_minimax_edit.py` 在设置了 `MINIMAX_API_KEY` 时改 `src/shiftpay.py`。已有一次成功调用：`MINIMAX_BASE_URL=https://api.minimaxi.com/v1`，`MINIMAX_MODEL=MiniMax-M2.5`，功能测试修改前退出码 1、修改后退出码 0。回复与 diff 在 `evidence/minimax_response_summary.json` 和 `records/minimax_development.md`。
 - **PowerContext**：记住 `feature_exit`、规格哈希和 nonce。空 scope 的 search/prepare 为空；写入后新进程读到同一条 artifact，并据此选择 `continue_edit` 或 `skip_edit`。

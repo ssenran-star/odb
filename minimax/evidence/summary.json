@@ -1,7 +1,7 @@
 {
-  "step": "A",
-  "minimax_called": false,
-  "todo": "evidence/TODO_MINIMAX.md",
+  "step": "B",
+  "minimax_called": true,
+  "todo": null,
   "feature_before_exit": 1,
   "regression_before_exit": 0,
   "decoy_before_exit": 0,
@@ -11,5 +11,9 @@
   "powercontext_reused": true,
   "nonce": "3f66a2b0c2c44115a077370df0f925a2",
   "code_sha256": "0538a1117194d2b4ebc2aa2fb02184f0f8a8e02aefaa825dc7cb129d1f424411",
-  "spec_sha256": "a8cb38b68c70162b734c291e4e3f351701f3b124641faaca5c374ac27cd2b45b"
+  "spec_sha256": "a8cb38b68c70162b734c291e4e3f351701f3b124641faaca5c374ac27cd2b45b",
+  "minimax_model": "MiniMax-M2.5",
+  "minimax_base_url": "https://api.minimaxi.com/v1",
+  "feature_after_exit": 0,
+  "regression_after_exit": 0
 }

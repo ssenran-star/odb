@@ -1,0 +1,12 @@
+command: ./.venv/bin/python -m pytest -q --tb=short tests/test_feature_holiday.py
+cwd: ./sample
+exit_code: 0
+code_path: src/shiftpay.py
+code_sha256: f7c3a3fc31786d668b1be7816247fbbd1e77b843942e19288e2d6e62ed285e36
+python: 3.13.5
+git_head: 85b83fa75f81fa87464f83067f1785b8ecb88b98
+--- pytest stdout ---
+..                                                                       [100%]
+2 passed in 0.00s
+
+--- pytest stderr ---

@@ -1,10 +1,10 @@
-command: /workspace/minimax/.venv/bin/python -m pytest -q --tb=short tests/test_feature_holiday.py
-cwd: /workspace/minimax/sample
+command: ./.venv/bin/python -m pytest -q --tb=short tests/test_feature_holiday.py
+cwd: ./sample
 exit_code: 1
 code_path: src/shiftpay.py
 code_sha256: 0538a1117194d2b4ebc2aa2fb02184f0f8a8e02aefaa825dc7cb129d1f424411
-python: 3.12.3
-git_head: d647275c308e09b7b623f322a26f5c4e85734fb0
+python: 3.13.5
+git_head: 85b83fa75f81fa87464f83067f1785b8ecb88b98
 --- pytest stdout ---
 FF                                                                       [100%]
 =================================== FAILURES ===================================

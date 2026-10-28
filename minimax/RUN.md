@@ -35,7 +35,7 @@ cp .env.example .env
 | `SEEKDB_DATABASE` | 库名 | `test` |
 | `SEEKDB_COLLECTION` | collection 名 | `sdd_materials` |
 
-中国区密钥把 `MINIMAX_BASE_URL` 改成 `https://api.minimaxi.com/v1`。密钥若不能调用 `MiniMax-M3`，把 `MINIMAX_MODEL` 改成账号可用的模型（例如 `MiniMax-M2.7`）。
+中国区密钥把 `MINIMAX_BASE_URL` 改成 `https://api.minimaxi.com/v1`。已完成的一次实时调用使用 `MINIMAX_BASE_URL=https://api.minimaxi.com/v1` 和 `MINIMAX_MODEL=MiniMax-M2.5`：功能测试修改前退出码 1，修改后退出码 0，回归测试前后都是 0。记录在 `evidence/summary.json` 与 `records/minimax_development.md`。
 
 ## 数据初始化与入口
 
@@ -60,14 +60,14 @@ cd minimax
 cd minimax
 .venv/bin/python -m pytest -q tests
 cd sample && ../.venv/bin/python -m pytest -q tests/test_regression_pay.py
-cd sample && ../.venv/bin/python -m pytest -q tests/test_feature_holiday.py   # 修改前应失败
+cd sample && ../.venv/bin/python -m pytest -q tests/test_feature_holiday.py
 ```
 
-功能测试失败的原因是 `overtime_pay(..., "holiday")` 仍返回 `0.0`，断言期望规格中的 600 / 180，不是导入错误。
+仓库里的 `sample/src/shiftpay.py` 已是 MiniMax 改后的实现，功能测试现在可以通过。修改前的失败日志是 `evidence/tests/feature_before.log`（`exit_code: 1`，断言 `0.0 == 600.0`），修改后是 `evidence/tests/feature_after.log`（`exit_code: 0`）。要重放「修改前失败」，先用 `evidence/snapshots/shiftpay.py.before` 覆盖该文件。
 
 ## 已知限制
 
-- 本云端环境转发不了 `MINIMAX_API_KEY`。没有密钥时不要伪造模型回复；看 `evidence/TODO_MINIMAX.md`。
+- 实时 MiniMax 调用已经完成（`MINIMAX_BASE_URL=https://api.minimaxi.com/v1`，`MINIMAX_MODEL=MiniMax-M2.5`）。没有密钥时仍用 `--dry-run`，不要伪造模型回复。
 - embedded seekdb 同一数据目录不要并发打开。
 - PowerContext 未配置向量模型时，`/v1/memory/search` 是全文检索。模块写入的进度文本带有固定检索词 `SDD_TASK=holiday-overtime`。
 - 上下文只从 seekdb 命中的 document 拼出来。改规格后必须再执行 `import`，下一次 `select` / `edit` 才会用到新正文。
